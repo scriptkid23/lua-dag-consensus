@@ -1,0 +1,704 @@
+% LUA-DAG Technical Whitepaper
+\documentclass[11pt,a4paper,twoside]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{footnotehyper}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!70!black,
+  pdftitle={LUA-DAG: Modular DA and Accountable Finality on a DAG},
+  pdfauthor={LUA-DAG Contributors}
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fixed,
+  keepspaces=true,
+  showstringspaces=false
+}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{remark}{Remark}[chapter]
+
+\title{LUA-DAG:\\Modular Data Availability and Accountable Finality\\on a Directed Acyclic Graph}
+\author{}
+\date{}
+
+\begin{document}
+
+% Avoid duplicate PDF page-1 anchor from \maketitle + abstract (hyperref)
+\hypersetup{pageanchor=false}
+\maketitle
+\hypersetup{pageanchor=true}
+
+\begin{abstract}
+LUA-DAG is a \emph{consensus and data availability} protocol intended for rollups and application-specific chains. The design deliberately omits a general-purpose execution layer and does not aim to compete head-on with monolithic Layer~1 systems such as Sui, Aptos, or Monad. Instead, it targets the modular data availability (DA) plus shared finality segment, with Celestia, Avail, and EigenDA as natural points of comparison.
+
+The architecture concentrates on two responsibilities: (i)~published-and-available blob data together with ordering evidence, and (ii)~accountable hard finality of a header chain. Ordering rests on the \textbf{Bullshark anchor commit rule} rather than heuristic ``frontier'' heuristics. Macro-finality employs \textbf{adaptive subnet BLS aggregation}: flat gossip for smaller validator sets ($N < 500$), subnet-based aggregation for larger sets ($N > 1000$), and interpolated behavior between those thresholds. A mandatory \textbf{two-tier finality model} combines \emph{Fast Execution Finality} ($\approx$5--10\,s) via Casper~FFG-style 2-chain justification on macro checkpoints with \emph{Sovereign Epoch Finality} ($\approx$60\,min) via Bitcoin Taproot checkpointing and six confirmations---the tier required for validator unbonding and for high-value bridge releases.
+
+This whitepaper presents a protocol design. Deploying it in production would require full implementation and independent security review. Performance figures are engineering targets, not guaranteed measurements.
+
+\paragraph{Cryptography.} The stack treated here is \emph{classical}: BLS12-381 for aggregation and ECVRF (Edwards25519, RFC~9381) for private sortition. Any future post-quantum transition should replace primitives in a single coordinated cryptographic migration so that security claims remain aligned across all layers.
+\end{abstract}
+
+\tableofcontents
+\cleardoublepage
+
+\chapter{Design Foundations}
+
+\section{Architectural commitments}
+The following principles shape the whole system:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Honest cryptography labeling:} Leader election uses ECVRF (Edwards25519). Aggregate voting uses BLS12-381. The protocol does not claim post-quantum security while those primitives remain in use; a later upgrade would replace them coherently end-to-end.
+  \item \textbf{Throughput and sampling:} Without data availability sampling (DAS), sustained DA throughput is \textbf{capped at 5\,MB/s} so full nodes on typical home links can replicate all data. Raising throughput into the tens of MB/s requires DAS---for example 2D Reed--Solomon with KZG or RLNC-based sampling---and should not be paired with full replication alone.
+  \item \textbf{Adaptive subnetting:} Macro vote aggregation scales with active set size: flat gossip at small scale, subnet aggregation at large scale, and leaderless gossip fallback under proposer failure (Chapter~\ref{ch:macro}).
+  \item \textbf{Finality boundaries:} Bitcoin checkpointing (Babylon/Pikachu-style) is part of the base design. Fast execution finality and sovereign epoch finality are distinct API-visible states.
+  \item \textbf{Multi-layer anti-Sybil:} Beyond a 5\% per-key stake cap, validators declare network placement (ASN, cloud, region), incur concentration-based reward decay, and may participate in DKG-based key-origin accountability as that machinery matures.
+\end{enumerate}
+
+\chapter{Executive Summary}
+
+\section{Core design choices}
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Narrow scope:} No execution layer; DA plus accountable header-chain finality only.
+  \item \textbf{Bullshark anchor rule:} Causal, quorum-based commits replace informal frontier rules.
+  \item \textbf{Adaptive macro aggregation:} Flat, subnet, or leaderless modes instead of a fixed subnet count.
+  \item \textbf{Permissionless membership:} Activation and exit queues, withdrawal gated on sovereign finality, churn limits, beacon refresh.
+  \item \textbf{Explicit API tiers:} \texttt{accepted}, \texttt{soft\_confirmed}, \texttt{finalized}, \texttt{epoch\_finalized}.
+  \item \textbf{Quantitative committee analysis:} Concrete capture probabilities for micro committees.
+  \item \textbf{Bitcoin anchoring:} Two finality tiers with clear operational meaning.
+  \item \textbf{Anti-Sybil layering:} Declarations, decay, and DKG fingerprinting where enabled.
+\end{enumerate}
+
+\section{Relationship to established patterns}
+Proof-of-stake under partial synchrony, accountable safety under $< \frac{1}{3}$ Byzantine stake, VRF-based private sortition, Casper~FFG-style finality, and light-client sync committees are well-studied ingredients; LUA-DAG composes them with the DAG availability layer and the two-tier finality model above.
+
+\section{Performance targets (indicative)}
+Table~\ref{tab:perf-targets} summarizes headline targets. The 5\,MB/s cap under full replication reflects the choice that light clients initially trust the sync committee for DA (no sampling); full nodes carry the full dataset.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Engineering performance targets (indicative; depend on implementation and deployment).}
+  \label{tab:perf-targets}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \textbf{Metric} & \textbf{Full replication (no DAS)} & \textbf{With DAS} \\
+    \midrule
+    DA throughput (sustained) & 5\,MB/s (hard cap) & 30--100\,MB/s \\
+    Soft-confirm latency p95 & 0.5--1.5\,s & 0.5--1.5\,s \\
+    Fast execution finality p95 & 5--10\,s & 5--10\,s \\
+    Sovereign epoch finality p95 & $\sim$60\,min (6 BTC blocks) & $\sim$60\,min \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Validator hardware (full-replication tier).} A reasonable target is 8 vCPU, 32\,GB RAM, 1\,TB NVMe, and 100\,Mbps connectivity, aligned with the 5\,MB/s cap and consumer-grade uplinks.
+
+\chapter{Positioning, Scope, and Success Metrics}
+\label{ch:positioning}
+
+\section{Value proposition}
+LUA-DAG offers \textbf{published, available, and finalized blob data} as a service. Customers are rollups, app-chains, and bridges---not end users of decentralized applications on a shared execution layer.
+
+\subsection{Inputs and outputs}
+Rollups supply: (i)~blobs (serialized transaction batches), optionally (ii)~state-root commitments or fraud-proof references. The protocol returns:
+\begin{itemize}[leftmargin=*]
+  \item Availability evidence (DAG vertex certificates).
+  \item Ordering evidence (anchor commit within each rollup namespace).
+  \item Hard-finality evidence (macro checkpoint with BLS aggregate).
+  \item Slashable evidence when safety assumptions are violated.
+\end{itemize}
+
+Rollups retain execution, cross-rollup atomicity (if desired), and mempool policy. LUA-DAG \textbf{does not} act as a universal shared sequencer; it commits blob order \emph{within} a namespace.
+
+\section{Explicit non-goals}
+\begin{itemize}[leftmargin=*]
+  \item Not a generic L1 (no EVM, Move, SVM, etc.).
+  \item Not a mandatory shared sequencer.
+  \item MEV: default off-chain to rollups; optional fairness mode (Fino-style integration) may be opted in.
+  \item Not ``light DA'' in the full-replication configuration: absent sampling, throughput stays capped as above.
+  \item Not post-quantum under the classical BLS and ECVRF assumptions stated earlier.
+  \item Not a live restaking AVS: native PoS stake grounds safety/liveness; Bitcoin does not vote in MacroQC.
+\end{itemize}
+
+\section{Key performance indicators (adversarial testnet)}
+High-level testnet success criteria include: fast execution finality p95 $< 10$\,s under nominal WAN; degraded p95 $< 20$\,s with $\frac{1}{4}$ stake offline and 5\% loss; sovereign epoch finality p95 $< 90$\,min; DA throughput $> 5$\,MB/s with 200 validators and mixed blob sizes; soft-confirm p95 $< 2$\,s; weak-subjectivity sync $< 30$\,min on 100\,Mbps home links; mobile header verify $< 5$\,ms; storage growth $< 100$\,GB/validator/month at 5\,MB/s; reliable detection of equivocation and configured data-unavailability scenarios; anti-Sybil false positive rate $< 1\%$ baseline with $\geq 95\%$ true positives on injected six-node splits.
+
+\section{Two-tier finality model}
+\label{sec:finality-tiers}
+Table~\ref{tab:finality-tiers} defines user-visible tiers. The split exists because accountable slashing loses force once stake has exited: an external PoW anchor closes the game-theoretic gap for validator rotation and large bridge flows.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Finality tiers.}
+  \label{tab:finality-tiers}
+  \begin{tabular}{@{}p{3.6cm}p{2.2cm}p{4.2cm}p{4.0cm}@{}}
+    \toprule
+    \textbf{Tier} & \textbf{Latency} & \textbf{Mechanism} & \textbf{Typical use} \\
+    \midrule
+    Soft confirmation & 0.5--1.5\,s & MicroQC (Bullshark + micro committee) & UI preview, revertible fees \\
+    Fast execution finality & 5--10\,s & MacroQC + Casper 2-chain rule & Rollup tx, capped bridging \\
+    Sovereign epoch finality & $\sim$60\,min & BTC Taproot checkpoint + 6 conf & Unbond, rotation, large bridge \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\chapter{System Model and Threat Model}
+
+\section{Validators and stake}
+Let $\mathcal{V} = \{v_1,\ldots,v_N\}$ with stake weights $w_i \geq w_{\min}$. Active stake in epoch $e$ is $W_e = \sum_{i \in \mathrm{active}_e} w_i$. Per-validator weight is capped at $w_{\max} = 0.05\, W_e$; excess stake does not increase voting power (it is ``burned'' for weight purposes).
+
+
+\subsection{Anti-Sybil obligations}
+To make the 5\% cap economically meaningful under permissionless joining, validators must:
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Declare network identity} at registration: ASN, cloud provider (if any), region; committed on-chain; changes require re-attestation.
+  \item \textbf{Submit DKG-fingerprint commitment} when participating in the optional registry; enforceability can strengthen as ceremony tooling matures.
+  \item \textbf{Accept correlation-based reward decay} (Section~\ref{sec:incentives-decay}).
+\end{enumerate}
+Undeclared validators are treated as maximally concentrated for decay purposes.
+
+\section{Network assumptions}
+The network is \textbf{partially synchronous}: there exist unknown $\Delta$ and GST such that after GST every message between correct nodes arrives within $\Delta$. Before GST the adversary controls scheduling. Topology is gossip-based with eager push for headers and votes and pull-on-demand for chunks---no rigid relay tree.
+
+\section{Trust assumptions for cryptography}
+\begin{itemize}[leftmargin=*]
+  \item Hash functions (SHA-256, BLAKE3): collision and second-preimage resistance.
+  \item BLS12-381: EUF-CMA under classical assumptions; rogue-key resistance via proof-of-possession.
+  \item ECVRF: pseudorandomness and operational bias resistance adequate for stake-weighted sortition (Algorand/Polkadot precedent), \emph{not} PQ-safe.
+  \item Bitcoin PoW: standard six-block confirmation rule and economic hardness against deep reorgs.
+  \item No synchronized clocks; only local timeouts.
+\end{itemize}
+
+\section{Threat summary}
+Safety holds for Byzantine stake $f < W/3$; liveness after GST requires honest online stake $> 2W/3$. Adaptive corruption after seeing randomness is allowed subject to epoch-bounded rates. Long-range attacks are mitigated by one-week weak subjectivity plus default Bitcoin checkpoints. Data withholding is addressed by certified vertices and retrieval challenges (Chapter~\ref{ch:da}). Sybil via stake split faces decay and (later) DKG evidence.
+
+\chapter{Architecture Overview}
+\label{ch:arch}
+
+\section{Taxonomic placement}
+LUA-DAG is an \textbf{ebb-and-flow} style design~\cite{neu2021ebb}: a dynamically available synchronous-feeling layer (DAG availability + micro-ordering) paired with a partially synchronous finality gadget (macro layer), analogous in spirit to RLMD-GHOST + finality gadgets and Ethereum three-slot finality narratives. Layer~4 adds a \textbf{Sovereign Anchor}: PoS-checkpointed-into-PoW, following Babylon~\cite{tas2022babylon} and Pikachu~\cite{azouvi2022pikachu}.
+
+\section{Four layers}
+Figure~\ref{fig:layers} summarizes the layering. Each layer exposes a single narrow interface upward (Section~\ref{sec:interfaces}).
+
+\begin{figure}[htbp]
+  \centering
+  \begin{lstlisting}[
+    frame=none,
+    basicstyle=\ttfamily\footnotesize,
+    columns=fixed,
+    keepspaces=true,
+    breaklines=false
+  ]
+                         +-------------------------------+
+                         | Rollup / app-chain client     |
+                         | (execution + own mempool)     |
+                         +---------------+---------------+
+                                        | submit blob
+                                         v
+        +----------------------------------------------------------------+
+        | Layer 1: AVAILABILITY DAG (Narwhal-class)                      |
+        | - chunks, erasure coding; certified vertices (2f+1)            |
+        +----------------------------------------------------------------+
+        | Layer 2: MICRO-ORDERING (Bullshark anchor commit)              |
+        | - ECVRF anchor; shortcut/slow path; MicroCheckpoint + MicroQC  |
+        +----------------------------------------------------------------+
+        | Layer 3: MACRO-FINALITY (Casper FFG-class)                     |
+        | - MacroCheckpoint; adaptive BLS aggregation; 2-chain rule      |
+        +----------------------------------------------------------------+
+        | Layer 4: SOVEREIGN ANCHOR (default ON)                         |
+        | - BTC Taproot; 6 conf -> epoch_finalized                       |
+        +----------------------------------------------------------------+
+                                         v
+                         +-------------------------------+
+                         | Rollup / bridge / light client|
+                         +-------------------------------+
+  \end{lstlisting}
+  \caption{Conceptual four-layer stack (ASCII).}
+  \label{fig:layers}
+\end{figure}
+
+\section{Inter-layer interfaces}
+\label{sec:interfaces}
+\begin{itemize}[leftmargin=*]
+  \item L1$\to$L2: \texttt{causal\_set(round\_cut)} $\mapsto$ certified vertices up to a round cut.
+  \item L2$\to$L3: \texttt{micro\_head()} $\mapsto$ \texttt{MicroCheckpoint} with roots and micro QC.
+  \item L3$\to$consumer: \texttt{latest\_finalized()} $\mapsto$ (\texttt{MacroHeader}, \texttt{MacroQC}).
+  \item L3+BTC: \texttt{latest\_epoch\_finalized()} adds \texttt{BitcoinAnchorProof}.
+  \item Rollup API: \texttt{blob\_status(blob\_id)} in $\{$\texttt{submitted}, \texttt{accepted}, \texttt{ordered}, \texttt{soft\_confirmed}, \texttt{justified}, \texttt{finalized}, \texttt{epoch\_finalized}$\}$.
+\end{itemize}
+
+\section{Typical timeline (illustrative)}
+Blob submission to soft confirmation can be sub-second to $\sim$1.5\,s under healthy conditions. Macro windows ($W=8$ micro-slots with $\sim$250\,ms rounds) yield $\sim$8\,s windows; two justified generations produce fast execution finality in $\sim$10--16\,s worst case. Bitcoin anchoring typically tracks epoch boundaries on the order of tens of minutes plus six confirmations ($\sim$60\,min sovereign latency).
+
+\section{Blob lifecycle}
+States advance monotonically except the deliberate revert window from \texttt{accepted} to \texttt{soft\_confirmed} semantics: soft confirmation may revert under macro stalls if \texttt{lock\_macro} is violated (a protocol bug class) or during slashable macro forks. Section~\ref{sec:cross-layer} details the \texttt{lock\_macro} invariant.
+
+\chapter{Data Structures}
+\label{ch:data}
+
+Table~\ref{tab:structs} lists primary structures. Deliberately, no object named ``block'' appears: execution, DA, ordering, and finality are separated.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Core structs (field lists abbreviated).}
+  \label{tab:structs}
+  \small
+  \begin{tabular}{@{}p{3.2cm}p{10.5cm}@{}}
+    \toprule
+    \textbf{Struct} & \textbf{Role / main fields} \\
+    \midrule
+    \texttt{Blob} & Namespace, bytes, Merkle commitment over chunks \\
+    \texttt{Chunk} & Fragment after erasure coding + Merkle proof \\
+    \texttt{IngressReceipt} & Slashable evidence for \texttt{accepted} \\
+    \texttt{Vertex} & Round, author, parents ($\geq 2f{+}1$), blob refs, sig \\
+    \texttt{CertifiedVertex} & Vertex + $2f{+}1$ BLS quorum \\
+    \texttt{MicroCheckpoint} & Slot, parent macro, anchor, sub-DAG root, ordered blob root, micro QC \\
+    \texttt{MicroQC} & Committee bitmap + BLS aggregate on micro head \\
+    \texttt{MacroCheckpoint} & Height, parent hash, micro head, DA root, valset root, epoch, proposer \\
+    \texttt{MacroQC} & Height, subnet bitmap, aggregates, validator bitmap, BLS, signed stake \\
+    \texttt{MacroHeader} & Compressed light-client header + aggregate \\
+    \texttt{SyncCommitteeUpdate} & Epoch handoff for light clients \\
+    \texttt{BitcoinAnchorProof} & Macro id, BTC txid, Merkle path, confirmations \\
+    \texttt{ValidatorIdentity} & ASN, cloud, region attestation \\
+    \texttt{DKGCommitment} & Key-origin fingerprint envelope \\
+    \texttt{SlashEvidence} & Kind + pairwise conflicting signed material \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\chapter{Layer 1: Availability DAG}
+\label{ch:da}
+
+\section{Certified vs.\ uncertified DAG}
+\textbf{Baseline deployment:} certified Narwhal/Bullshark-style DAG---parents must already be certified ($2f{+}1$ signatures). This adds roughly one round compared with some uncertified designs but simplifies availability arguments. Uncertified fast paths analogous to Mysticeti remain an optional direction once Adelie-class mitigations are integrated.
+
+\textbf{Shoal-inspired enhancement:} leader reputation and pipelining reduce reliance on timeouts in the common case.
+
+\section{Vertex creation and certification}
+Each validator in round $r$ waits for $\geq 2f{+}1$ certified parents from $r-1$, batches blob references subject to \texttt{MAX\_VERTEX\_PAYLOAD} (default 256\,KB here), signs, and gossips. Peers verify signatures, parent certification, and \emph{at least one} chunk availability proof per referenced blob on the fast path; full chunk coverage is enforced via custody and challenges. Quorum signatures promote a \texttt{CertifiedVertex}.
+
+\section{Erasure coding}
+Blobs split into $k$ data chunks expanded to $n=2k$ via Reed--Solomon (rate $\frac{1}{2}$). Chunk size 32\,KB baseline; commitment is Merkle root over chunk hashes. Gossip load-balances bytes across validators ($\sim 1/N$ share each).
+
+\subsection{Throughput cap under full replication}
+\texttt{THROUGHPUT\_HARD\_CAP} = 5\,MB/s enforced via payload caps and a base-fee targeting $\sim$50\% steady utilization ($\sim$2.5\,MB/s typical). Sustaining tens of MB/s \emph{without} DAS implies multi-TB/day full-node bandwidth and risks centralization.
+
+\subsection{Transition to data availability sampling}
+2D Reed--Solomon + KZG commitments (or RLNC-DAS) become appropriate when raising throughput; the vertex schema may add \texttt{kzg\_commitment} with backward compatibility for Merkle-only vertices during migration.
+
+\section{Garbage collection}
+\textbf{Hot} rounds (near head): retain full chunks. \textbf{Warm}: keep commitments + at least one chunk. \textbf{Cold}: may delete bytes; archives opt-in.
+
+\section{Custody and retrieval challenges}
+\label{sec:challenges}
+Custody validators for chunk $(\texttt{blob\_id}, i)$ are
+\begin{equation}
+  \mathrm{custody}(\texttt{blob\_id}, i) = \bigl\{\, v_j : H(\texttt{pubkey}_j \| \texttt{blob\_id} \| i) \bmod N < K_{\mathrm{custody}} \,\bigr\},
+\end{equation}
+with default $K_{\mathrm{custody}} = 2f{+}1$. Obligations: store in hot tier, answer challenges within $T_{\mathrm{retrieve}} = 30$\,s, retain Merkle proofs in warm tier.
+
+Challengers broadcast \texttt{Challenge}; silence from a supermajority of custody validators yields \texttt{UnavailabilityEvidence} assembled from signed gossip witness statements (validators need not inspect chunk correctness---only absence of valid gossip responses). Successful proofs slash non-responders (default 5\%) and, if the whole custody set fails, mark the blob unavailable and slash the ingress validator 5\%.
+
+Anti-spam: minimum interval between challenges, fee floor refunded on successful slash.
+
+\chapter{Layer 2: Micro-Ordering (Bullshark)}
+\label{ch:micro}
+
+\section{Waves and anchors}
+Waves span four rounds: $4w,\ldots,4w{+}3$. Randomness beacon
+\begin{equation}
+  R_w = H\bigl(R_{w-1} \| \text{MacroQC of latest finalized}\bigr).
+\end{equation}
+Each validator computes $y_i = \mathrm{ECVRF}_i(R_w \| \text{``anchor''})$; the anchor minimizes $y_i \cdot W / (w_i \cdot \mathrm{rep}_i)$ with Shoal-style reputation $\mathrm{rep}_i \in [0.8, 1.2]$, narrowing the bias surface from wider reputation windows. Identity remains hidden until the anchor publishes at round $4w$.
+
+\section{Commit rules}
+\textbf{Shortcut (two rounds):} Anchor $A_w$ at $4w$ commits if $\geq 2f{+}1$ certified vertices at $4w{+}1$ include $A_w$ as parent.
+
+\textbf{Slow path (four rounds):} If shortcut fails, validators vote at $4w{+}2$; at $4w{+}3$, $2f{+}1$ support commits, or skip advances the wave.
+
+\section{Linearization}
+Given committed anchor $A_w$, $\mathrm{Closure}(A_w)$ excludes vertices in the previous anchor's closure. Deterministic topological sort (BFS from $A_w$, tie-break by vertex hash) orders vertices; blob refs group by namespace preserving local order. Roots \texttt{committed\_sub\_dag\_root} and \texttt{ordered\_blob\_refs\_root} summarize the wave.
+
+\section{MicroQC and soft confirmation}
+A micro committee (default size 256, VRF-sampled) signs the \texttt{MicroCheckpoint} hash; aggregation at $\lceil \frac{2}{3} C_{\mathrm{micro}} \rceil$ forms \texttt{MicroQC}. Presence of \texttt{MicroQC} marks blobs \texttt{soft\_confirmed} with API flag \texttt{revert\_risk = true}.
+
+\section{Why Bullshark suffices here}
+Asynchronous networks lack a global DAG snapshot; Bullshark commits via causal quorum linkage propagating with messages. Correct nodes that see supporting vertices must eventually see the anchor and its ancestors, forcing agreement on commits without wall-clock synchronicity.
+
+\chapter{Layer 3: Macro-Finality}
+\label{ch:macro}
+
+\section{Cadence and proposer}
+Every $W=8$ micro-slots, emit a \texttt{MacroCheckpoint}. Macro proposer selection mirrors micro anchors with beacon $R^{\mathrm{macro}}_h = H(R^{\mathrm{macro}}_{h-1} \| \mathrm{MacroQC}_{h-1})$, primary and backup proposers, timeout $T_{\mathrm{macropropose}} = 4$\,s.
+
+\section{Adaptive aggregation (Modes 0, A, B)}
+\label{sec:modes}
+Let $N_e$ be active validators in epoch $e$. Define
+\begin{equation}
+  K_e =
+  \begin{cases}
+    0, & N_e < 500 \quad \text{(Mode 0: flat gossip)}\\
+    \bigl\lceil N_e / 128 \bigr\rceil, & 500 \leq N_e \leq 1000 \quad \text{(interpolated)}\\
+    \bigl\lceil N_e / 128 \bigr\rceil, & N_e > 1000 \quad \text{(Mode A: subnets)}
+  \end{cases}
+\end{equation}
+capped at $K_{\max} = 32$. Subnet membership rotates per-epoch via
+\begin{equation}
+  \mathrm{subnet}(v_i,e) = H(\texttt{pubkey}_i \| R^{\mathrm{macro}}_{\mathrm{epoch\_start}(e)}) \bmod K_e.
+\end{equation}
+
+\paragraph{Mode 0 ($K_e=0$).} Validators sign \texttt{MacroProposal} and gossip partials; proposer aggregates until $\geq 2W/3$ stake or timeout. Failure triggers Mode~B.
+
+\paragraph{Mode A ($K_e \geq 4$).} Subnet aggregators collect partials, publishing subnet aggregates at internal $2/3$ stake \emph{or} at deadline $T_{\mathrm{subnet}} = T_{\mathrm{macropropose}}/2$. Macro proposer unions subnets whose verified aggregates sum to $\geq 2W/3$ stake.
+
+\paragraph{Mode B (fallback).} Validators gossip partials; any node may form a candidate \texttt{MacroQC}. Canonical winner maximizes signed stake; ties break by lexicographic validator (or subnet) bitmap. Re-broadcast rules yield $O(\log N)$ gossip rounds convergence.
+
+\section{Two-chain finality}
+$C_h$ is \textbf{justified} with a valid \texttt{MacroQC}. It is \textbf{finalized} (fast execution tier) when some $C_{h+1}$ is also justified and $\texttt{parent\_height\_hash}(C_{h+1}) = H(C_h)$. Expected latency $\approx 2W \times (\text{micro slot duration})$.
+
+\section{Slashing (macro layer)}
+Equivocating macro votes, surrounding votes, double propose: 100\% slash. Micro double-votes: 50\%. Proven data unavailability: 5\% per incident (annual soft-cap 50\%). Inactivity leak: if no finality for four macro windows, offline/mis-voting stake bleeds $\approx$0.5\% per window until supermajority restores progress.
+
+\chapter{Light Clients, Checkpoints, and Bitcoin Anchoring}
+
+\section{Sync committee}
+Each epoch (e.g.\ 1024 macro heights) samples \texttt{SYNC\_COMMITTEE\_SIZE} = 512 slots with replacement, weighted by stake. The committee signs every \texttt{MacroHeader}; verification is one pairing + bitmap parse ($<5$\,ms mobile target). The committee \emph{does not} finalize---it is a gateway for resource-constrained verifiers.
+
+\section{Weak subjectivity}
+\texttt{WEAK\_SUBJECTIVITY\_PERIOD} = one week. Checkpoints must be fresh from trusted sources ($\geq 3$ recommended). Bitcoin anchoring narrows long-range exposure for validating nodes; weak subjectivity still bootstraps initial sync.
+
+\section{Bitcoin checkpointing (default ON)}
+Vigilante relayers aggregate \texttt{BitcoinCheckpoint} = $(\text{epoch}, \text{macro\_height}, \text{macro\_hash}, \text{validator\_set\_root})$, collect $\geq 2W/3$ BLS signatures, embed 64-byte payload in Taproot script-path spend, broadcast with adaptive fees, and publish \texttt{BitcoinAnchorProof} after six confirmations---promoting matching macro heights to \texttt{epoch\_finalized}.
+
+\paragraph{Economics and failure modes.} Relayers earn \texttt{BTC\_RELAY\_REWARD} (default 5\% of macro proposer reward class). If all relayers stall, rollup fast finality continues but validator exits halt. Deep BTC reorgs $>6$ invalidate proofs until re-anchoring (explicit accountable-halt narrative).
+
+\section{Bridge value cap}
+\texttt{BRIDGE\_VALUE\_CAP} defaults to $1000 \times \texttt{MIN\_STAKE}$; bridges may go lower. Withdrawals above the cap require \texttt{epoch\_finalized}.
+
+\chapter{Permissionless Membership}
+
+\section{Activation and churn}
+Validators deposit, queue under \texttt{MAX\_ACTIVATION\_PER\_EPOCH} (default 4). Exits queue at \texttt{MAX\_EXIT\_PER\_EPOCH}. While exiting after acceptance in macro state, validators stop voting but remain slashable until sovereign finality.
+
+\section{Withdrawal delay}
+Stake unlocks only after the containing macro checkpoint reaches \texttt{epoch\_finalized} with \texttt{WITHDRAWAL\_DELAY} = six Bitcoin confirmations ($\sim$60\,minutes), replacing multi-week PoS-only delays when anchoring is healthy.
+
+\section{Randomness beacon refresh}
+MacroQC-chained beacons resist grinding below $1/3$ stake. Inclusion incentives and subnet pre-publication prevent proposers from hiding visible aggregates.
+
+\section{Anti-Sybil mechanisms}
+\label{sec:antisybil}
+Validators submit \texttt{ValidatorIdentity}. Concentration score:
+\begin{equation}
+  \mathrm{concentration\_score}(v_i) =
+    \alpha\, s_{\mathrm{ASN}}(v_i) + \beta\, s_{\mathrm{cloud}}(v_i) + \gamma\, s_{\mathrm{voting}}(v_i),
+\end{equation}
+defaults $(\alpha,\beta,\gamma) = (0.4, 0.4, 0.2)$. Declaring \texttt{self\_hosted} zeros cloud concentration term.
+
+DKG registry participation may begin as opt-in infrastructure and can become mandatory for new activations under governance as ceremony protocols stabilize. The slash escalator is $\texttt{DKG\_SLASH\_BASE} \times 2^{n-1}$ for $n$ colluding origins.
+
+\chapter{Incentives and Accountability}
+\label{sec:incentives-decay}
+
+\section{Reward split (illustrative parameters)}
+Base 28\%, vertex authoring 15\%, anchor proposing 10\%, micro committee 5\%, macro voting 28\%, macro proposing 5\%, aggregation 4\%, Bitcoin relay 5\%---tunable by governance.
+
+\section{Fee market}
+Ingress validators capture the bulk of fees; macro proposer share incentivizes DA root inclusion; 20\% burn. EIP-1559-style base fee tracks target utilization.
+
+\section{Anti-Sybil decay on rewards}
+\begin{equation}
+  R_{\mathrm{actual}}(v_i) =
+    R_{\mathrm{base}}(v_i) \times \bigl(1 - \texttt{REWARD\_DECAY\_RATE} \times \mathrm{concentration\_score}(v_i)\bigr),
+\end{equation}
+with \texttt{REWARD\_DECAY\_RATE} default 1. Bootstrap grace halves decay for 30 epochs when $<50$ validators.
+
+\chapter{Security Analysis}
+
+\section{Macro safety (sketch)}
+If $f < W/3$, two finalized conflicting checkpoints imply two $\geq 2W/3$ vote sets intersecting in $\geq W/3$ stake, yielding Casper-class slashable surround/conflict evidence.
+
+\section{Liveness (sketch)}
+After GST, honest anchors appear with sufficient probability; shortcut commits progress waves; honest macro proposers assemble QCs; consecutive justified heights finalize. Termination is eventual consistent with partial synchrony and FLP.
+
+\section{Micro committee capture probability}
+For committee size $C$ and Byzantine stake fraction $\beta$,
+\begin{equation}
+  P(\text{capture}) = \sum_{k=\lceil C/3\rceil}^{C} \binom{C}{k} \beta^k (1-\beta)^{C-k}.
+\end{equation}
+Near $\beta \approx 1/3$, finite committees never make soft confirmation as strong as macro finality---hence API separation.
+
+\section{Attack matrix (selected rows)}
+Long-range: weak subjectivity window + BTC anchor. Data withholding: challenges + slashing. Anchor DoS: slow path + reputation. Macro proposer DoS: Mode~B. Subnet capture: VRF partitions + quorum across surviving subnets. Micro-flush: \texttt{lock\_macro} (Section~\ref{sec:cross-layer}). Sync committee lying: no finality power; cross-check + BTC. Post-quantum: outside the classical assumptions of this document.
+
+\section{Cross-layer interaction: \texttt{lock\_macro}}
+\label{sec:cross-layer}
+Micro anchors must build on DAG views whose macro parent equals the latest locally justified macro checkpoint \emph{without downgrade}. If a peer advertises a higher \texttt{lock\_macro}, verify its \texttt{MacroQC} before certifying. Lower \texttt{lock\_macro} anchors are rejected. Micro checkpoints record \texttt{parent\_macro} explicitly. Macro forks freeze soft-finality semantics until slashable resolution.
+
+\chapter{Performance Plan}
+Parameter sweeps span validator counts 50--500, WAN topologies, round 100--500\,ms, macro windows 4--16, committee sizes, subnet counts, blob mixes, erasure rates, and Byzantine fractions. Measure throughput, latency percentiles, bandwidth, CPU, storage, recovery times, fairness, and security signal rates.
+
+Expected bottlenecks: chunk gossip bandwidth, BLS verification volume, disk IOPS, subnet aggregation latency at scale.
+
+\chapter{Roadmap, Risks, and Open Questions}
+
+\section{Phased delivery}
+A realistic engineering program proceeds from formal modeling (for example TLA+) through layered prototypes: availability DAG, Bullshark micro-ordering, macro finality with adaptive aggregation, Bitcoin anchoring and light clients, permissionless membership with anti-Sybil instrumentation, adversarial testnets, and external audit. Bitcoin checkpoint and anti-Sybil workstreams add parallel calendar time relative to a consensus-only core.
+
+\section{Risk register}
+Cross-layer bugs, aggregation correctness, Bitcoin operations, sync committee deception, anti-Sybil tuning, and adoption competition head the list.
+
+\section{Future extensions}
+Mandatory DAS and mandatory DKG for new activations are natural hardening steps once tooling is ready; an optional uncertified DAG mode may follow the same maturity path. A coordinated cryptographic upgrade could move aggregation and leader election to post-quantum primitives. Explicitly out of scope in this document: economic security borrowed from restaking as the live liveness backbone, universal shared sequencing for all rollups, and native IBC-style transport.
+
+\chapter{Comparison with Related Systems}
+Relative to modular DA networks, LUA-DAG emphasizes DAG-shaped availability with load spreading, explicit two-tier finality, and accountable macro votes backed by a sovereign Bitcoin anchor. Compared with Celestia: DAG load balancing and the sovereign epoch tier. Compared with Avail: different timing on sampling versus full replication, plus macro finality and BTC anchoring choices here. Compared with Mysticeti/Sui-class systems: DA-only scope rather than shared execution. Compared with Acki Nacki: full-validator macro accountability rather than probabilistic per-block committees. Compared with Babylon: integrated DAG DA layer alongside checkpointing economics.
+
+\chapter{Parameter Reference}
+Table~\ref{tab:params} lists representative constants; governance may tune within operational ranges.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Selected protocol parameters (illustrative defaults).}
+  \label{tab:params}
+  \small
+  \begin{tabular}{@{}l l@{}}
+    \toprule
+    \textbf{Parameter} & \textbf{Default} \\
+    \midrule
+    \texttt{ROUND\_DURATION} & 250\,ms \\
+    \texttt{MACRO\_WINDOW\_W} & 8 micro-slots \\
+    \texttt{MICRO\_COMMITTEE\_SIZE} & 256 \\
+    \texttt{SUBNET\_FLAT\_THRESHOLD} / \texttt{FULL} & 500 / 1000 validators \\
+    \texttt{MAX\_VERTEX\_PAYLOAD} & 256\,KB \\
+    \texttt{MAX\_BLOB\_SIZE} & 1\,MB \\
+    \texttt{THROUGHPUT\_HARD\_CAP} & 5\,MB/s \\
+    \texttt{GC\_HOT\_HORIZON} / \texttt{WARM} & 200 / 10{,}000 rounds \\
+    \texttt{WEAK\_SUBJECTIVITY\_PERIOD} & 7 days \\
+    \texttt{WITHDRAWAL\_DELAY} & 6 BTC confirmations \\
+    \texttt{T\_MACROPROPOSE} / \texttt{T\_SUBNET} / \texttt{T\_CANONICALIZE} & 4\,s / 2\,s / 8\,s \\
+    \texttt{SYNC\_COMMITTEE\_SIZE} & 512 \\
+    \texttt{BTC\_CONFIRMATIONS\_FOR\_FINAL} & 6 \\
+    \texttt{IDENTITY\_REATTEST\_PERIOD} & 4 epochs \\
+    \texttt{REWARD\_DECAY\_RATE} & 1.0 \\
+    \texttt{DKG\_SLASH\_BASE} & 20\% \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\chapter*{Glossary (abridged)}
+\addcontentsline{toc}{chapter}{Glossary (abridged)}
+
+\begin{description}[leftmargin=0pt,labelindent=0pt,itemsep=0.35em]
+  \item[Anchor.] VRF-elected commit pivot for a Bullshark wave.
+  \item[Bitcoin anchor proof.] Evidence bundling macro hash into BTC with confirmations.
+  \item[Certified vertex.] Vertex certified by $2f{+}1$ signatures---only such vertices may parent new work.
+  \item[Fast execution finality.] Casper 2-chain justified macro state ($\sim$seconds-to-ten seconds).
+  \item[Sovereign epoch finality.] BTC-confirmed checkpoint state ($\sim$one hour).
+  \item[Mode 0 / A / B.] Flat, subnet, or leaderless macro aggregation pathways.
+\end{description}
+
+\begin{thebibliography}{99}
+\bibitem{neu2021ebb}
+Neu, Tas, and Tse,
+\newblock \emph{Ebb-and-Flow Protocols: A Resolution of the Availability-Finality Dilemma},
+\newblock IEEE S\&P, 2021.
+
+\bibitem{tas2022babylon}
+Tas \emph{et al.},
+\newblock \emph{Bitcoin-Enhanced Proof-of-Stake Security: Possibilities and Impossibilities (Babylon)},
+\newblock IEEE S\&P, 2023.
+
+\bibitem{azouvi2022pikachu}
+Azouvi \emph{et al.},
+\newblock \emph{Pikachu: Securing PoS Blockchains from Long-Range Attacks by Checkpointing into Bitcoin PoW},
+\newblock 2022.
+
+\bibitem{danezis2022narwhal}
+Danezis \emph{et al.},
+\newblock \emph{Narwhal and Tusk: A DAG-based Mempool and Efficient BFT Consensus},
+\newblock EuroSys, 2022.
+
+\bibitem{spiegelman2022bullshark}
+Spiegelman \emph{et al.},
+\newblock \emph{Bullshark: DAG BFT Protocols Made Practical},
+\newblock CCS, 2022.
+
+\bibitem{buterin2017casper}
+Buterin and Griffith,
+\newblock \emph{Casper the Friendly Finality Gadget},
+\newblock arXiv:1710.09437, 2017.
+
+\bibitem{dwork1988partial}
+Dwork, Lynch, Stockmeyer,
+\newblock \emph{Consensus in the Presence of Partial Synchrony},
+\newblock JACM, 1988.
+
+\bibitem{fischer1985flp}
+Fischer, Lynch, Paterson,
+\newblock \emph{Impossibility of Distributed Consensus with One Faulty Process},
+\newblock JACM, 1985.
+\end{thebibliography}
+
+\appendix
+
+\chapter{Blob State Machine (formal summary)}
+States: $\texttt{submitted} \to \texttt{accepted} \to \texttt{ordered} \to \texttt{soft\_confirmed} \to \texttt{justified} \to \texttt{finalized} \to \texttt{epoch\_finalized}$. Typical triggers: ingress receipt; inclusion in a certified vertex; membership in an anchor's causal closure; justification by a macro checkpoint containing the relevant micro head; the two-chain finality rule; Bitcoin anchor proof with sufficient confirmations. Revert risks: \texttt{soft\_confirmed} and \texttt{justified} may regress during slashable macro forks; \texttt{finalized} is reversible only through accountable slashing inside the unbond window; \texttt{epoch\_finalized} would require a deep Bitcoin reorg to invalidate.
+
+\chapter{Committee Capture Reference Table}
+Numeric values for committee capture appear in Appendix~\ref{app:capture}.
+
+\chapter{Bibliographic notes}
+The bibliography lists primary references. BFT, DAG-based consensus, data availability sampling, finality gadgets, and PoS long-range security each have large literatures; readers should follow citations from the core papers below into those research lines.
+
+\chapter{Adversarial Testnet KPIs}
+\label{app:kpi}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Key performance indicators for adversarial testnets under the full-replication throughput cap.}
+  \small
+  \begin{tabular}{@{}p{7.8cm}p{6.8cm}@{}}
+    \toprule
+    \textbf{KPI} & \textbf{Pass threshold} \\
+    \midrule
+    Fast execution finality latency p95 & $< 10$\,s (200 validators, 5 WAN regions, 0 Byzantine) \\
+    Fast execution finality p95 (degraded) & $< 20$\,s ($\frac{1}{4}$ stake offline, 5\% packet loss) \\
+    Sovereign epoch finality p95 & $< 90$\,min (6 BTC confirmations + propagation) \\
+    DA throughput sustained & $> 5$\,MB/s (200 validators; 64\,KB--1\,MB blob mix) \\
+    Soft-confirm latency p95 & $< 2$\,s \\
+    Weak-subjectivity state sync & $< 30$\,min on 100\,Mbps residential uplink \\
+    Light client header verify & $< 5$\,ms (Snapdragon~8-class mobile) \\
+    Storage growth & $< 100$\,GB/validator/month at 5\,MB/s sustained \\
+    Slashable evidence (equivocation) & 100\% detection \\
+    Slashable evidence (DA test scenario) & $> 99\%$ \\
+    Anti-Sybil alarms & $< 1\%$ false positives; $\geq 95\%$ true positives (6-node split inject) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\noindent\textbf{Out of scope for these KPIs:} application-level TPS; optional MEV-fairness modes; cross-rollup atomic latency; sustained DA throughput above 5\,MB/s without introducing sampling.
+
+\chapter{Reward Pool Split (Default Parameters)}
+\label{app:rewards}
+
+\begin{table}[htbp]
+  \centering
+  \caption{Epoch reward decomposition (governance-tunable).}
+  \begin{tabular}{@{}l r p{7.5cm}@{}}
+    \toprule
+    \textbf{Reward type} & \textbf{\%} & \textbf{Condition (summary)} \\
+    \midrule
+    Base reward & 28 & Online; signatures in $\geq$80\% of certified vertices in epoch \\
+    Vertex authoring & 15 & Vertices certified on time \\
+    Anchor proposing & 10 & Selected as micro anchor and wave commits \\
+    Micro committee & 5 & Sampled into micro committee; votes MicroQC \\
+    Macro voting & 28 & Votes MacroQC on $\geq$95\% of macro heights \\
+    Macro proposing & 5 & Macro proposals become justified \\
+    Subnet / flat aggregation & 4 & Timely subnet or Mode~0 aggregation \\
+    Bitcoin vigilante relay & 5 & Relayer; checkpoint reaches required confirmations \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\chapter{Attack Matrix and Mitigations (Summary)}
+\label{app:attacks}
+
+\begin{longtable}{@{}p{3.6cm} p{4.6cm} p{6.0cm}@{}}
+  \toprule
+  \textbf{Attack} & \textbf{Effect} & \textbf{Mitigation} \\
+  \midrule
+  \endfirsthead
+  \multicolumn{3}{c}{{\tablename\ \thetable{} --- continued}} \\
+  \toprule
+  \textbf{Attack} & \textbf{Effect} & \textbf{Mitigation} \\
+  \midrule
+  \endhead
+  Long-range PoS fork & Fake history for new syncers & 1-week WS + default BTC checkpoint \\
+  Data withholding & Unavailable blob under soft confirm & Certified vertices; challenges; slashing \\
+  Anchor DoS & No shortcut commit & Private sortition; 4-round slow path \\
+  Macro proposer DoS & Macro window loss & Mode~B leaderless gossip; timeout \\
+  Equivocation & Conflicting checkpoints & 100\% slash; Casper 2-chain \\
+  Subnet capture & Bad subnet aggregates & VRF partitions; quorum across subnets \\
+  Mode B canonical race & Divergent MacroQC candidates & Stake priority + lex bitmap tie-break \\
+  Storage spam & Meaningless DA bytes & Fees; caps; 5\,MB/s full-replication bound \\
+  Sync committee lying & Bad headers for light clients & No finality power; full-node checks; BTC anchor \\
+  Sybil stake split & Fake decentralization & 5\% cap + decay + DKG path \\
+  Unbond + long-range & Slash-evading fork & Stake locked until \texttt{epoch\_finalized} \\
+  Bitcoin reorg & Invalid anchor proof & Re-checkpoint; documented revert case \\
+  Post-quantum break & Forged classical signatures & Addressed only under a future coordinated crypto migration \\
+  \bottomrule
+\end{longtable}
+
+\chapter{Micro Committee Capture Probabilities}
+\label{app:capture}
+
+Probability that a committee of size $C$ contains at least $\lceil C/3 \rceil$ Byzantine weight when each validator is independently Byzantine with probability~$\beta$:
+\[
+  P(\text{capture}) = \sum_{k=\lceil C/3 \rceil}^{C} \binom{C}{k} \beta^k (1-\beta)^{C-k}.
+\]
+
+\begin{table}[htbp]
+  \centering
+  \caption{Reference capture probabilities (stake-weighted sampling approximated by Bernoulli $\beta$ per slot).}
+  \begin{tabular}{@{}l c c c@{}}
+    \toprule
+    $C$ & $\beta=0.20$ & $\beta=0.30$ & $\beta=0.33$ \\
+    \midrule
+    64 & $1.5 \times 10^{-3}$ & 0.18 & 0.42 \\
+    128 & $2.7 \times 10^{-5}$ & 0.06 & 0.40 \\
+    256 & $1.0 \times 10^{-8}$ & 0.005 & 0.37 \\
+    512 & $1.5 \times 10^{-15}$ & $4 \times 10^{-5}$ & 0.34 \\
+    1024 & $< 10^{-30}$ & $3 \times 10^{-9}$ & 0.30 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\noindent With default $C_{\mathrm{micro}}=256$ and $\beta=0.2$, soft confirmation has $\sim 10^{-8}$ committee failure rate---acceptable for UX, not for settlement-grade guarantees (\texttt{finalized} required).
+
+\chapter{Finality Requirements by Use Case}
+\label{app:usecases}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{Mandatory finality tier per integration scenario.}
+  \begin{tabular}{@{}p{5.2cm} p{2.4cm} p{5.8cm}@{}}
+    \toprule
+          \textbf{Use case} & \textbf{Latency} & \textbf{Tier} \\
+    \midrule
+    UI / fee preview & $<2$\,s & \texttt{soft\_confirmed} \\
+    Rollup transaction commit & 5--10\,s & \texttt{finalized} \\
+    Cross-rollup messaging & 5--10\,s & \texttt{finalized} \\
+    Bridge withdrawal $\leq$ \texttt{BRIDGE\_VALUE\_CAP} & 5--10\,s & \texttt{finalized} \\
+    Bridge withdrawal $>$ cap & $\sim$60\,min & \texttt{epoch\_finalized} \\
+    Validator unbond / rotation & $\sim$60\,min & \texttt{epoch\_finalized} \\
+    Treasury / slashing distribution (long-range sensitive) & $\sim$60\,min & \texttt{epoch\_finalized} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\end{document}
