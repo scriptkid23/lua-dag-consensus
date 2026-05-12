@@ -1,0 +1,48 @@
+# LUA-DAG default protocol parameters (whitepaper Table 17.1).
+# This file is the single source of truth for node / sim / cli.
+# DO NOT edit per-environment values here — copy to config/local.toml
+# (gitignored) and override there.
+
+schema_version = 1
+
+[timing]
+round_duration_ms       = 250    # micro round length
+t_macropropose_ms       = 4000   # macro proposer slot
+t_subnet_ms             = 2000   # subnet aggregation window
+t_canonicalize_ms       = 8000   # canonical macro publish window
+
+[bullshark]
+micro_committee_size    = 256
+shortcut_round_count    = 2
+slow_path_round_count   = 4
+wave_round_count        = 4
+
+[macro_fin]
+macro_window_w          = 8      # micro-slots per macro window
+two_chain_depth         = 2
+inactivity_leak_bps_per_window = 50  # 0.5 % per window
+inactivity_leak_trigger_windows = 4
+
+[aggregation]
+subnet_flat_threshold   = 500    # Ne < 500  → Mode 0
+subnet_full_threshold   = 1000   # Ne ≥ 1000 → Mode A target
+# Mode B (leaderless fallback) triggers when proposer misses both primary and backup slots.
+
+[leader]
+reputation_floor        = 0.8
+reputation_ceiling      = 1.2
+reputation_decay        = 0.95
+
+[slashing]
+equivocation_bps        = 10000  # 100 %
+double_vote_bps         = 5000   # 50 %
+da_incident_bps         = 500    # 5 % per incident
+slashing_cap_bps        = 5000   # 50 % per epoch cap
+
+[anchor_l4]
+btc_confirmations_for_final = 6   # placeholder until L4 lands
+
+[storage]
+gc_hot_horizon_rounds   = 200
+gc_warm_horizon_rounds  = 10000
+snapshot_interval_macros = 256
