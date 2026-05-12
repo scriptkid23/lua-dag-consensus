@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Local cargo lock for binaries lives in workspace root — keep it
+# (Cargo.lock is committed; rule above only ignores target/)
+
+# RocksDB local data + WAL (devnet, sim runs)
+/data/
+*.rdb
+*.log
+*.sst
+*.wal
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Coverage / profiling
+*.profraw
+/coverage/
+/tarpaulin-report.html
+
+# Local env overrides
+.env
+.env.local
+config/local.toml
