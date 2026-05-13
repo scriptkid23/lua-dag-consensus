@@ -1,20 +1,6 @@
-[package]
-name        = "lua-dag-workspace"
-version     = "0.0.0"
-description = "Workspace root stub crate until member crates are added (plan 01+)."
-edition.workspace      = true
-rust-version.workspace = true
-license.workspace      = true
-publish.workspace      = true
-repository.workspace   = true
-authors.workspace      = true
-
-[lib]
-path = "src/lib.rs"
-
 [workspace]
 resolver = "2"
-members  = []
+members  = ["crates/types"]
 
 [workspace.package]
 edition      = "2024"
