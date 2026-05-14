@@ -1,0 +1,25 @@
+[package]
+name         = "storage"
+version      = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+publish.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+[lints]
+workspace = true
+
+[dependencies]
+types       = { path = "../types" }
+consensus   = { path = "../consensus" }
+crypto      = { path = "../crypto" }
+borsh       = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+rocksdb     = { workspace = true }
+serde       = { workspace = true }
+
+[dev-dependencies]
+tempfile    = { workspace = true }

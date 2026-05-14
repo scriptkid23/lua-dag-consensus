@@ -1,0 +1,9 @@
+//! Type-specific stores. Each module exposes encode-and-put / decode-on-get
+//! helpers built on top of [`crate::db::Database`].
+
+pub mod macro_store;
+pub mod micro_store;
+pub mod slash_store;
+pub mod valset_store;
+pub mod vertex_store;
+pub mod vote_book_store;
