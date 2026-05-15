@@ -3230,6 +3230,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sim"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "clap",
+ "consensus",
+ "crypto",
+ "hex",
+ "rand 0.8.6",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 2.0.18",
+ "types",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
