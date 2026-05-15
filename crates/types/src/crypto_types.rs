@@ -4,18 +4,78 @@
 //! shapes. Semantic operations live in `crates/crypto`.
 //!
 //! Per the crate tech-stack note, `serde` is reserved for config and
-//! JSON-RPC interop. Crypto material travels on the wire via Borsh only,
-//! so `Serialize`/`Deserialize` are deliberately not derived for the
-//! variable- or oversized-array types below. `Hash32` keeps serde because
-//! its 32-byte array is within serde's stock derive support and the type
-//! shows up in config/RPC surfaces.
+//! JSON-RPC interop. Wire codecs use Borsh for most crypto blobs; fixed-size
+//! types that appear in config/bootstrap TOML (e.g. [`BlsPubkey`]) also
+//! derive `serde`. `Hash32` is included for the same reason.
+
+use core::fmt;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// BLS12-381 G1 compressed public key (48 bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, BorshSerialize, BorshDeserialize)]
 pub struct BlsPubkey(pub [u8; 48]);
+
+impl Serialize for BlsPubkey {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&hex::encode(self.0))
+        } else {
+            serializer.serialize_bytes(&self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BlsPubkey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if deserializer.is_human_readable() {
+            deserializer.deserialize_str(BlsPubkeyVisitor)
+        } else {
+            deserializer.deserialize_bytes(BlsPubkeyVisitor)
+        }
+    }
+}
+
+struct BlsPubkeyVisitor;
+
+impl<'de> Visitor<'de> for BlsPubkeyVisitor {
+    type Value = BlsPubkey;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("48-byte BLS public key (hex string or raw bytes)")
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+        let bytes = hex::decode(v.trim()).map_err(E::custom)?;
+        if bytes.len() != 48 {
+            return Err(E::invalid_length(bytes.len(), &"48 bytes after hex decode"));
+        }
+        let mut a = [0u8; 48];
+        a.copy_from_slice(&bytes);
+        Ok(BlsPubkey(a))
+    }
+
+    fn visit_bytes<E: de::Error>(self, v: &[u8]) -> Result<Self::Value, E> {
+        if v.len() != 48 {
+            return Err(E::invalid_length(v.len(), &"exactly 48 bytes"));
+        }
+        let mut a = [0u8; 48];
+        a.copy_from_slice(v);
+        Ok(BlsPubkey(a))
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut arr = [0u8; 48];
+        for (i, slot) in arr.iter_mut().enumerate() {
+            *slot = seq
+                .next_element()?
+                .ok_or_else(|| de::Error::invalid_length(i, &"sequence of 48 bytes"))?;
+        }
+        Ok(BlsPubkey(arr))
+    }
+}
 
 /// BLS12-381 G2 compressed signature (96 bytes).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, BorshSerialize, BorshDeserialize)]

@@ -1,6 +1,7 @@
 //! `ValidatorSet` snapshot, epoch-indexed.
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use serde::{Deserialize, Serialize};
 
 use super::identity::ValidatorIdentity;
 use crate::{
@@ -10,9 +11,11 @@ use crate::{
 
 /// A single validator entry in the active set.
 ///
-/// `Serialize`/`Deserialize` are not derived because `BlsPubkey` is
-/// wire-only (Borsh).
-#[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+/// `Borsh` is the canonical wire encoding. `serde` is included for config
+/// and bootstrap file formats (e.g. TOML validator sets).
+#[derive(
+    Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
+)]
 pub struct ValidatorEntry {
     /// Validator id.
     pub id: ValidatorId,
@@ -25,7 +28,9 @@ pub struct ValidatorEntry {
 }
 
 /// Validator-set snapshot for a specific epoch.
-#[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
+)]
 pub struct ValidatorSet {
     /// Epoch this snapshot is valid for.
     pub epoch: Epoch,
