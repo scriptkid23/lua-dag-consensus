@@ -55,6 +55,12 @@ impl Database {
         Ok(self.inner.get_cf(h, key)?)
     }
 
+    /// Borrow the underlying `rocksdb::DB` (CLI inspection tools).
+    #[must_use]
+    pub fn raw(&self) -> &DB {
+        &self.inner
+    }
+
     /// Borrow the underlying DB. Stores use this for batch writes.
     pub(crate) fn inner(&self) -> &DB {
         &self.inner

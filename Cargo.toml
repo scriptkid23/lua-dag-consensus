@@ -8,6 +8,7 @@ members  = [
     "crates/storage",
     "apps/node",
     "apps/sim",
+    "apps/cli",
 ]
 
 [workspace.package]
