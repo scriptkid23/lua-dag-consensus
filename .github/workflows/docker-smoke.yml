@@ -1,0 +1,33 @@
+name: Docker build smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Phase A image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: lua-dag-smoke:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run container sanity (exit if binary fails)
+        run: |
+          set -euo pipefail
+          cid=$(docker run -d -e STORAGE_PATH=/data/rocksdb -v "$RUNNER_TEMP/rock:/data" lua-dag-smoke:ci)
+          sleep 5
+          docker logs "$cid" 2>&1 | grep -q 'opened RocksDB' || { docker logs "$cid"; exit 1; }
+          docker rm -f "$cid" >/dev/null

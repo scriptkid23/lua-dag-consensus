@@ -1,0 +1,9 @@
+target
+devnet-data
+.git
+.github
+**/target
+.idea
+.vscode
+*.md
+!docker/README.md

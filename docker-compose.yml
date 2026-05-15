@@ -1,0 +1,48 @@
+x-dev-smoke: &dev-smoke
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: lua-dag-dev:latest
+  environment:
+    STORAGE_PATH: /data/rocksdb
+
+services:
+  node0:
+    <<: *dev-smoke
+    volumes:
+      - ./devnet-data/node0:/data
+    ports:
+      - "40000:40000"
+      - "40001:40001"
+      - "40002:40002"
+    hostname: node0
+
+  node1:
+    <<: *dev-smoke
+    volumes:
+      - ./devnet-data/node1:/data
+    ports:
+      - "40100:40000"
+      - "40101:40001"
+      - "40102:40002"
+    hostname: node1
+
+  node2:
+    <<: *dev-smoke
+    volumes:
+      - ./devnet-data/node2:/data
+    ports:
+      - "40200:40000"
+      - "40201:40001"
+      - "40202:40002"
+    hostname: node2
+
+  node3:
+    <<: *dev-smoke
+    volumes:
+      - ./devnet-data/node3:/data
+    ports:
+      - "40300:40000"
+      - "40301:40001"
+      - "40302:40002"
+    hostname: node3

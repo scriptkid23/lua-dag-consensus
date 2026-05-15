@@ -9,6 +9,7 @@ members  = [
     "apps/node",
     "apps/sim",
     "apps/cli",
+    "tools/lua_dag_smoke",
 ]
 
 [workspace.package]

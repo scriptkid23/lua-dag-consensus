@@ -5,6 +5,9 @@
 # Local cargo lock for binaries lives in workspace root — keep it
 # (Cargo.lock is committed; rule above only ignores target/)
 
+# Docker Compose bind mounts (Phase A devnet)
+devnet-data/
+
 # RocksDB local data + WAL (devnet, sim runs)
 /data/
 *.rdb
