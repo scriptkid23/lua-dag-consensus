@@ -52,7 +52,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     let persistence = RocksPersistence::new(db);
 
     // Consensus.
-    let sm = StateMachine::new(cfg.consensus.clone());
+    let sm: StateMachine = StateMachine::new(cfg.consensus.clone());
     let _clock = TokioClock::new();
 
     // Bridge (events_tx fed into consensus; bridge.actions_rx is drained but unused
