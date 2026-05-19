@@ -1,4 +1,4 @@
-name: Docker build smoke
+name: Docker smoke
 
 on:
   pull_request:
@@ -6,28 +6,81 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  single-replica:
+    name: Single-replica readiness smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Phase A image
+      - name: Build node image
         uses: docker/build-push-action@v6
         with:
           context: .
-          tags: lua-dag-smoke:ci
+          tags: lua-node:ci
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Run container sanity (exit if binary fails)
+      - name: Run single-replica smoke (poll /readyz)
         run: |
           set -euo pipefail
-          cid=$(docker run -d -e STORAGE_PATH=/data/rocksdb -v "$RUNNER_TEMP/rock:/data" lua-dag-smoke:ci)
-          sleep 5
-          docker logs "$cid" 2>&1 | grep -q 'opened RocksDB' || { docker logs "$cid"; exit 1; }
-          docker rm -f "$cid" >/dev/null
+          docker run --rm -d --name lua-node-smoke -p 9100:9100 lua-node:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9100/readyz; then
+              echo "single-replica ready"
+              docker rm -f lua-node-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs lua-node-smoke
+          docker rm -f lua-node-smoke
+          exit 1
+
+  four-node-compose:
+    name: Four-node Compose smoke (spec §8 acceptance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: docker compose up
+        run: docker compose up -d --build
+
+      - name: Wait for all nodes healthy
+        run: |
+          set -euo pipefail
+          deadline=$(( $(date +%s) + 180 ))
+          while :; do
+            running=$(docker compose ps --status=running --services | wc -l)
+            healthy=$(docker compose ps --format json \
+              | jq -s 'if length == 0 then false else all(.[]; .Health == "healthy") end')
+            if [ "$running" -ge 4 ] && [ "$healthy" = "true" ]; then
+              echo "all four nodes healthy"
+              break
+            fi
+            if [ $(date +%s) -gt $deadline ]; then
+              echo "Timed out waiting for 4-node devnet healthy"
+              docker compose logs --no-color
+              exit 1
+            fi
+            sleep 3
+          done
+
+      - name: Probe each admin /readyz
+        run: |
+          set -euo pipefail
+          for port in 9100 9101 9102 9103; do
+            curl -fsS http://127.0.0.1:$port/readyz
+          done
+
+      - name: docker compose down
+        if: always()
+        run: docker compose down -v

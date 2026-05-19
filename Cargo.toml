@@ -9,7 +9,6 @@ members  = [
     "apps/node",
     "apps/sim",
     "apps/cli",
-    "tools/lua_dag_smoke",
 ]
 
 [workspace.package]
@@ -33,7 +32,7 @@ smallvec     = { version = "1", features = ["serde", "union"] }
 bytes        = "1"
 
 # --- async / runtime (only used by `net`, `node`) ---
-tokio        = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal"] }
+tokio        = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "net", "io-util"] }
 futures      = "0.3"
 
 # --- crypto (only used by `crypto`) ---
@@ -57,7 +56,7 @@ prometheus         = "0.13"
 axum         = { version = "0.7", default-features = false, features = ["http1", "json", "macros", "tokio"] }
 
 # --- cli (only used by binaries) ---
-clap         = { version = "4", features = ["derive"] }
+clap         = { version = "4", features = ["derive", "env"] }
 
 # --- test / dev ---
 proptest     = "1"

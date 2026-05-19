@@ -28,3 +28,20 @@ pub fn build_transport(keypair: &Keypair) -> Result<Boxed<(PeerId, StreamMuxerBo
         .map(|either, _| either.into_inner())
         .boxed())
 }
+
+/// QUIC-free transport for Compose + CI (spec §4.1 — devnet TCP baseline).
+///
+/// Stack: TCP (`nodelay`) → Noise (XX handshake, ephemeral keys) → Yamux.
+/// The existing [`build_transport`] remains for callers that still want
+/// QUIC + TCP until QUIC pinning lands.
+pub fn build_transport_tcp_only(keypair: &Keypair) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
+    let tcp_transport = tcp::tokio::Transport::new(tcp::Config::new().nodelay(true));
+    let noise = noise::Config::new(keypair).map_err(|e| Error::Transport(e.to_string()))?;
+    let yamux = yamux::Config::default();
+    Ok(tcp_transport
+        .upgrade(upgrade::Version::V1Lazy)
+        .authenticate(noise)
+        .multiplex(yamux)
+        .map(|(peer, muxer), _| (peer, StreamMuxerBox::new(muxer)))
+        .boxed())
+}

@@ -1,46 +1,80 @@
-# Docker local devnet (Phase A)
+# Docker prod-like devnet (Phase B)
 
 ## What runs
 
-Compose starts **four** containers from `Dockerfile` running **`lua-dag-smoke`**: each opens RocksDB under env **`STORAGE_PATH=/data/rocksdb`** (bind-mounted to `./devnet-data/nodeN`). This validates **Linux build + RocksDB linkage** independent of **`apps/node`**.
+Compose starts **four `node` containers** built from the workspace
+`Dockerfile`, each running `node` against the `devnet` profile
+(`config/profiles/devnet.toml`). Inside the container every node listens on
+`9000/tcp` (gossip) and `9100/tcp` (admin); the host-side ports are remapped
+in `docker-compose.yml`:
 
-## Prerequisites
+| Service | Host gossip | Host admin |
+|---------|-------------|------------|
+| node0   | `9000`      | `9100`     |
+| node1   | `9001`      | `9101`     |
+| node2   | `9002`      | `9102`     |
+| node3   | `9003`      | `9103`     |
 
-- Docker Compose v2
-- Repo root **`docker-compose.yml`** and **`Dockerfile`**
+RocksDB lives under `/data/rocksdb` inside the container, bind-mounted to
+`./devnet-data/nodeN` on the host so state survives container restarts.
+
+## Healthcheck strategy
+
+The chosen healthcheck path is the **in-binary `node --health-probe`**
+subcommand:
+
+```dockerfile
+HEALTHCHECK --interval=5s --timeout=2s --retries=12 \
+    CMD ["/usr/local/bin/node", "--health-probe"]
+```
+
+`--health-probe` opens a short-lived TCP connection to `127.0.0.1:9100` and
+sends `GET /readyz`. Exit code `0` means the admin endpoint returned `200`;
+non-zero means anything else (no listener, `503`, parse error, etc.).
+
+This avoids installing `curl`/`wget` in the runtime image while keeping the
+probe path identical to what an external monitoring system would use. If the
+strategy ever changes, update this section before introducing competing
+checks (we don't want both `--health-probe` and a `curl` fallback in tree).
 
 ## Commands
 
 ```bash
-docker compose up --build
+docker compose up --build -d
+
+# Each node exposes admin on host port 9100..9103.
+curl -fsS http://127.0.0.1:9100/readyz
+
+# Stop + remove containers (bind-mounted RocksDB dirs survive).
+docker compose down
+
+# Stop + drop named volumes (host bind mounts under ./devnet-data still
+# need manual removal).
+docker compose down -v
 ```
 
-**Wiping state:** Delete **`./devnet-data/`** entirely or **`docker compose down -v`** (only removes Compose-defined volumes — our bind mounts remain on disk unless you delete dirs manually).
+## Identity + bootstrap
 
-## Bootstrap / listeners (future)
+Each container gets:
 
-Containers resolve each other via Compose DNS (**`node0`**, **`node1`**, …).
+- `LUA_DAG_NODE_IDENTITY_LABEL=nodeN` — selects the BLAKE3-derived
+  deterministic libp2p key for `nodeN`.
+- `LUA_DAG_BOOTSTRAP_PEERS=…` — the multiaddrs of the **other three** nodes,
+  using `/dns4/<hostname>/tcp/9000/p2p/<PeerId>`. The PeerIDs are pinned in
+  [`crates/net/tests/devnet_identity_golden.rs`](../crates/net/tests/devnet_identity_golden.rs)
+  and must match the strings inside `docker-compose.yml`.
 
-Host port mapping placeholders:
+To regenerate the PeerIDs after an intentional DST or label change:
 
-| Replica | Published base block |
-|---------|----------------------|
-| node0   | 40000–40002 → 40000–40002 |
-| node1   | 40100–40102 → 40000–40002 |
-| node2   | 40200–40202 … |
-| node3   | 40300–40302 … |
+```bash
+cargo run -p node --bin print_devnet_peer_ids --locked
+```
 
-Wire real libp2p multiaddrs inside **`BOOTSTRAP_PEERS`** env when **`apps/node`** exists (Phase B).
+…and paste the four lines into both the golden test and
+`docker-compose.yml`.
 
 ## Secrets
 
-Never commit genesis keys — use **`*.example`** only.
-
-## Phase B checklist
-
-Once **`apps/node`** ships per `2026-05-12-06-node-binary.md`:
-
-1. Ensure **`apps/node`** stays in workspace `members`.
-2. Replace **`cargo build -p lua_dag_smoke`** builder line with **`cargo build --release -p node`**.
-3. **`COPY`** **`target/release/node`** to `/usr/local/bin/node`; adjust **`ENTRYPOINT`**.
-4. Adjust **`docker-compose.yml`** service blocks (or anchor) to run **`node`**; pass **`BOOTSTRAP_PEERS`** / **`RUST_LOG`**.
+Never commit real validator keypairs. The `devnet_seed` identity kind is for
+local devnet **only** — testnet/prod profiles must mount real keys (spec
+§3.4 option 2).

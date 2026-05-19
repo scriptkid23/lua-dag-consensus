@@ -1,48 +1,70 @@
-x-dev-smoke: &dev-smoke
-  build:
-    context: .
-    dockerfile: Dockerfile
-  image: lua-dag-dev:latest
-  environment:
-    STORAGE_PATH: /data/rocksdb
+# 4-node prod-like devnet (spec §8 acceptance demo).
+#
+# Each node loads `config/profiles/devnet.toml` and is given an identity
+# label + a bootstrap list (the OTHER three peers) via environment. PeerIDs
+# are the golden values from `crates/net/tests/devnet_identity_golden.rs`
+# — regenerate via `cargo run -p node --bin print_devnet_peer_ids` if they
+# ever drift.
+
+x-node-common: &node-common
+  build: .
+  image: lua-node:dev
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "/usr/local/bin/node", "--health-probe"]
+    interval: 5s
+    timeout: 2s
+    retries: 12
 
 services:
   node0:
-    <<: *dev-smoke
-    volumes:
-      - ./devnet-data/node0:/data
-    ports:
-      - "40000:40000"
-      - "40001:40001"
-      - "40002:40002"
+    <<: *node-common
     hostname: node0
+    environment:
+      LUA_DAG_PROFILE: devnet
+      LUA_DAG_NODE_IDENTITY_LABEL: node0
+      LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
+    ports:
+      - "9000:9000"
+      - "9100:9100"
+    volumes:
+      - ./devnet-data/node0:/data/rocksdb
 
   node1:
-    <<: *dev-smoke
-    volumes:
-      - ./devnet-data/node1:/data
-    ports:
-      - "40100:40000"
-      - "40101:40001"
-      - "40102:40002"
+    <<: *node-common
     hostname: node1
+    environment:
+      LUA_DAG_PROFILE: devnet
+      LUA_DAG_NODE_IDENTITY_LABEL: node1
+      LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
+    ports:
+      - "9001:9000"
+      - "9101:9100"
+    volumes:
+      - ./devnet-data/node1:/data/rocksdb
 
   node2:
-    <<: *dev-smoke
-    volumes:
-      - ./devnet-data/node2:/data
-    ports:
-      - "40200:40000"
-      - "40201:40001"
-      - "40202:40002"
+    <<: *node-common
     hostname: node2
+    environment:
+      LUA_DAG_PROFILE: devnet
+      LUA_DAG_NODE_IDENTITY_LABEL: node2
+      LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
+    ports:
+      - "9002:9000"
+      - "9102:9100"
+    volumes:
+      - ./devnet-data/node2:/data/rocksdb
 
   node3:
-    <<: *dev-smoke
-    volumes:
-      - ./devnet-data/node3:/data
-    ports:
-      - "40300:40000"
-      - "40301:40001"
-      - "40302:40002"
+    <<: *node-common
     hostname: node3
+    environment:
+      LUA_DAG_PROFILE: devnet
+      LUA_DAG_NODE_IDENTITY_LABEL: node3
+      LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc"
+    ports:
+      - "9003:9000"
+      - "9103:9100"
+    volumes:
+      - ./devnet-data/node3:/data/rocksdb

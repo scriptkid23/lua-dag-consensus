@@ -25,6 +25,10 @@ pub mod dst {
     pub const SUBNET_ASSIGN: &[u8] = b"lua-dag/v1/subnet-assign";
     /// Proof-of-Possession.
     pub const POP: &[u8] = b"lua-dag/v1/pop";
+    /// Deterministic peer key derivation for **`devnet` only** —
+    /// blake3 input is hashed with this prefix before supplying bytes
+    /// to libp2p Ed25519 key material.
+    pub const DEVNET_PEER_IDENTITY: &[u8] = b"lua-dag/v1/devnet-peer-identity";
 }
 
 /// Blake3-256 over `data` with a DST prefix.
@@ -76,5 +80,22 @@ mod tests {
         let c = blake3_with_dst(dst::POP, b"x");
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn devnet_peer_identity_dst_is_unique() {
+        use std::collections::HashSet;
+        let ids: &[&[u8]] = &[
+            dst::CONTENT_HASH,
+            dst::MICRO_QC,
+            dst::MACRO_PROPOSAL,
+            dst::MACRO_VOTE,
+            dst::BEACON,
+            dst::SUBNET_ASSIGN,
+            dst::POP,
+            dst::DEVNET_PEER_IDENTITY,
+        ];
+        let set: HashSet<&[u8]> = ids.iter().copied().collect();
+        assert_eq!(set.len(), ids.len(), "DST registry has a duplicate");
     }
 }

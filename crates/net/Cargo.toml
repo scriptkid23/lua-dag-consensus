@@ -15,6 +15,7 @@ workspace = true
 types       = { path = "../types" }
 crypto      = { path = "../crypto" }
 consensus   = { path = "../consensus" }
+anyhow      = { workspace = true }
 borsh       = { workspace = true }
 thiserror   = { workspace = true }
 tokio       = { workspace = true }
