@@ -13,9 +13,7 @@ use crate::{
 ///
 /// `Borsh` is the canonical wire encoding. `serde` is included for config
 /// and bootstrap file formats (e.g. TOML validator sets).
-#[derive(
-    Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
-)]
+#[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct ValidatorEntry {
     /// Validator id.
     pub id: ValidatorId,
@@ -28,9 +26,7 @@ pub struct ValidatorEntry {
 }
 
 /// Validator-set snapshot for a specific epoch.
-#[derive(
-    Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize,
-)]
+#[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct ValidatorSet {
     /// Epoch this snapshot is valid for.
     pub epoch: Epoch,

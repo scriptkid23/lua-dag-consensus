@@ -122,7 +122,9 @@ pub async fn spawn_gossip_tasks(
                     tracing::warn!(target: "net::swarm", %ma, error = %e, "bootstrap dial failed");
                 }
             }
-            Err(e) => tracing::warn!(target: "net::swarm", addr = %addr, error = %e, "invalid bootstrap multiaddr"),
+            Err(e) => {
+                tracing::warn!(target: "net::swarm", addr = %addr, error = %e, "invalid bootstrap multiaddr")
+            }
         }
     }
 
