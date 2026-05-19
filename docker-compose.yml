@@ -6,8 +6,9 @@
 # — regenerate via `cargo run -p node --bin print_devnet_peer_ids` if they
 # ever drift.
 
+# Single `build:` avoids parallel exports racing on the same tag `lua-node:dev`
+# (BuildKit error: "image ... already exists"). Only node0 builds; others reuse.
 x-node-common: &node-common
-  build: .
   image: lua-node:dev
   restart: unless-stopped
   healthcheck:
@@ -16,11 +17,17 @@ x-node-common: &node-common
     timeout: 2s
     retries: 12
 
+# Swarm listen / dial / gossipsub mesh hints (`distinct_connected_peer_count`, …).
+x-node-log-env: &node-log-env
+  RUST_LOG: info,net::swarm=info
+
 services:
   node0:
     <<: *node-common
+    build: .
     hostname: node0
     environment:
+      <<: *node-log-env
       LUA_DAG_PROFILE: devnet
       LUA_DAG_NODE_IDENTITY_LABEL: node0
       LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
@@ -34,6 +41,7 @@ services:
     <<: *node-common
     hostname: node1
     environment:
+      <<: *node-log-env
       LUA_DAG_PROFILE: devnet
       LUA_DAG_NODE_IDENTITY_LABEL: node1
       LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
@@ -47,6 +55,7 @@ services:
     <<: *node-common
     hostname: node2
     environment:
+      <<: *node-log-env
       LUA_DAG_PROFILE: devnet
       LUA_DAG_NODE_IDENTITY_LABEL: node2
       LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node3/tcp/9000/p2p/12D3KooWHEgZEY1X7fAHjb9GgrdNQFrVvs7dAh7CcWVqpxeqEiMq"
@@ -60,6 +69,7 @@ services:
     <<: *node-common
     hostname: node3
     environment:
+      <<: *node-log-env
       LUA_DAG_PROFILE: devnet
       LUA_DAG_NODE_IDENTITY_LABEL: node3
       LUA_DAG_BOOTSTRAP_PEERS: "/dns4/node0/tcp/9000/p2p/12D3KooWNJUN1Vcx4BtroqAX4Eqzoc7AP7k7m4zVPjFHgqU4rgSL,/dns4/node1/tcp/9000/p2p/12D3KooWL1XMKGUfDJc5ynvUjQ7tXsFkbcn5drxseJCczacaXTJN,/dns4/node2/tcp/9000/p2p/12D3KooWSPCsqrqrQY5yhXR2xkbNt1aSaYBe2EAK42PQjEBcnjtc"

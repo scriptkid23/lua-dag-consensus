@@ -42,7 +42,7 @@ blake3       = "1"
 curve25519-dalek = "4"
 
 # --- network (only used by `net`, `node`) ---
-libp2p       = { version = "0.55", default-features = false, features = ["gossipsub", "quic", "tcp", "tls", "noise", "yamux", "macros", "tokio", "kad", "identify"] }
+libp2p       = { version = "0.55", default-features = false, features = ["gossipsub", "quic", "tcp", "tls", "noise", "yamux", "macros", "tokio", "kad", "identify", "dns"] }
 
 # --- storage (only used by `storage`, `cli`) ---
 rocksdb      = { version = "0.22", default-features = false, features = ["snappy"] }

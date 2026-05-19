@@ -1,5 +1,9 @@
 //! Live libp2p swarm wired to consensus `Event`/`Action` channels (spec §4.1).
 //!
+//! **Observability:** lifecycle logs use tracing target **`net::swarm`** (`INFO`
+//! for listens / connects / gossipsub topic subscriptions; `WARN` for dial and
+//! handshake failures). Example: `RUST_LOG=info,net::swarm=info`.
+//!
 //! Single-task event loop driving:
 //!   * inbound gossipsub messages → `gossip_wire::inbound_message` → `events_tx`
 //!   * `actions_rx` → `gossip_wire::outbound_broadcast` → `swarm.publish`
@@ -115,10 +119,10 @@ pub async fn spawn_gossip_tasks(
         match addr.parse::<Multiaddr>() {
             Ok(ma) => {
                 if let Err(e) = swarm.dial(ma.clone()) {
-                    tracing::warn!(%ma, error = %e, "bootstrap dial failed");
+                    tracing::warn!(target: "net::swarm", %ma, error = %e, "bootstrap dial failed");
                 }
             }
-            Err(e) => tracing::warn!(addr = %addr, error = %e, "invalid bootstrap multiaddr"),
+            Err(e) => tracing::warn!(target: "net::swarm", addr = %addr, error = %e, "invalid bootstrap multiaddr"),
         }
     }
 
@@ -139,6 +143,12 @@ pub async fn spawn_gossip_tasks(
                 ev = swarm.select_next_some() => match ev {
                     SwarmEvent::NewListenAddr { address, .. } => {
                         observed += 1;
+                        tracing::info!(
+                            target: "net::swarm",
+                            address = %address,
+                            observed_listen_addrs = observed,
+                            "listening on address",
+                        );
                         // Update the public snapshot of bound listen addrs.
                         listen_tx.send_modify(|v| {
                             if !v.iter().any(|a| a == &address) {
@@ -157,20 +167,113 @@ pub async fn spawn_gossip_tasks(
                             let _ = ready_tx.send(true);
                         }
                     }
-                    SwarmEvent::Behaviour(DevnetBehaviourEvent::Gossipsub(
-                        gossipsub::Event::Message { message, .. },
-                    )) => {
-                        match gossip_wire::inbound_message(message.topic.as_str(), &message.data) {
-                            Ok(Some(event)) => {
-                                if events_tx.send(event).await.is_err() {
-                                    tracing::warn!("events_rx dropped; shutting swarm task");
-                                    break;
-                                }
-                            }
-                            Ok(None) => {} // topic recognized but no Event mapping yet
-                            Err(e) => tracing::warn!(error = %e, "inbound decode failed"),
-                        }
+                    SwarmEvent::ConnectionEstablished {
+                        peer_id,
+                        endpoint,
+                        num_established,
+                        ..
+                    } => {
+                        let distinct_peers = swarm.connected_peers().count();
+                        tracing::info!(
+                            target: "net::swarm",
+                            remote_peer_id = %peer_id,
+                            endpoint = ?endpoint,
+                            connection_count_with_peer = num_established.get(),
+                            distinct_connected_peer_count = distinct_peers,
+                            "p2p connection established — peers can exchange protocols (noise/yamux)",
+                        );
                     }
+                    SwarmEvent::ConnectionClosed {
+                        peer_id,
+                        endpoint,
+                        num_established,
+                        cause,
+                        ..
+                    } => {
+                        let distinct_peers = swarm.connected_peers().count();
+                        tracing::info!(
+                            target: "net::swarm",
+                            remote_peer_id = %peer_id,
+                            endpoint = ?endpoint,
+                            remaining_connections_with_peer = num_established,
+                            distinct_connected_peer_count = distinct_peers,
+                            cause = ?cause,
+                            "p2p connection closed",
+                        );
+                    }
+                    SwarmEvent::OutgoingConnectionError {
+                        peer_id,
+                        error,
+                        ..
+                    } => {
+                        tracing::warn!(
+                            target: "net::swarm",
+                            peer_id = ?peer_id,
+                            error = %error,
+                            "outgoing dial failed — check bootstrap multiaddrs / dns / firewall",
+                        );
+                    }
+                    SwarmEvent::IncomingConnectionError {
+                        send_back_addr,
+                        error,
+                        ..
+                    } => {
+                        tracing::warn!(
+                            target: "net::swarm",
+                            send_back_addr = %send_back_addr,
+                            error = %error,
+                            "incoming connection handshake failed",
+                        );
+                    }
+                    SwarmEvent::Behaviour(DevnetBehaviourEvent::Gossipsub(gs_ev)) => match gs_ev {
+                        gossipsub::Event::Message { message, .. } => {
+                            match gossip_wire::inbound_message(message.topic.as_str(), &message.data)
+                            {
+                                Ok(Some(event)) => {
+                                    if events_tx.send(event).await.is_err() {
+                                        tracing::warn!("events_rx dropped; shutting swarm task");
+                                        break;
+                                    }
+                                }
+                                Ok(None) => {} // topic recognized but no Event mapping yet
+                                Err(e) => tracing::warn!(error = %e, "inbound decode failed"),
+                            }
+                        }
+                        gossipsub::Event::Subscribed { peer_id, topic } => {
+                            tracing::info!(
+                                target: "net::swarm",
+                                remote_peer_id = %peer_id,
+                                topic = ?topic,
+                                "gossipsub peer subscribed to topic — overlay mesh forming",
+                            );
+                        }
+                        gossipsub::Event::Unsubscribed { peer_id, topic } => {
+                            tracing::info!(
+                                target: "net::swarm",
+                                remote_peer_id = %peer_id,
+                                topic = ?topic,
+                                "gossipsub peer unsubscribed from topic",
+                            );
+                        }
+                        gossipsub::Event::GossipsubNotSupported { peer_id } => {
+                            tracing::warn!(
+                                target: "net::swarm",
+                                remote_peer_id = %peer_id,
+                                "peer connected without gossipsub — wrong protocol stack?",
+                            );
+                        }
+                        gossipsub::Event::SlowPeer {
+                            peer_id,
+                            failed_messages,
+                        } => {
+                            tracing::warn!(
+                                target: "net::swarm",
+                                remote_peer_id = %peer_id,
+                                ?failed_messages,
+                                "gossipsub peer marked slow",
+                            );
+                        }
+                    },
                     _ => {}
                 },
                 maybe_action = actions_rx.recv() => match maybe_action {

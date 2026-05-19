@@ -31,14 +31,21 @@ pub fn build_transport(keypair: &Keypair) -> Result<Boxed<(PeerId, StreamMuxerBo
 
 /// QUIC-free transport for Compose + CI (spec §4.1 — devnet TCP baseline).
 ///
-/// Stack: TCP (`nodelay`) → Noise (XX handshake, ephemeral keys) → Yamux.
+/// Stack: DNS resolver → TCP (`nodelay`) → Noise (XX, ephemeral keys) → Yamux.
+/// The DNS layer is required so bootstrap multiaddrs of the form
+/// `/dns4/<hostname>/tcp/<port>` (Compose service names) can be resolved
+/// before dialing. Without it libp2p reports `Multiaddr is not supported`
+/// and refuses to dial.
+///
 /// The existing [`build_transport`] remains for callers that still want
 /// QUIC + TCP until QUIC pinning lands.
 pub fn build_transport_tcp_only(keypair: &Keypair) -> Result<Boxed<(PeerId, StreamMuxerBox)>> {
     let tcp_transport = tcp::tokio::Transport::new(tcp::Config::new().nodelay(true));
+    let dns_transport = libp2p::dns::tokio::Transport::system(tcp_transport)
+        .map_err(|e| Error::Transport(format!("dns resolver: {e}")))?;
     let noise = noise::Config::new(keypair).map_err(|e| Error::Transport(e.to_string()))?;
     let yamux = yamux::Config::default();
-    Ok(tcp_transport
+    Ok(dns_transport
         .upgrade(upgrade::Version::V1Lazy)
         .authenticate(noise)
         .multiplex(yamux)
