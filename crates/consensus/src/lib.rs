@@ -21,7 +21,6 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod host_context;
-pub mod l2_minimal;
 pub mod leader;
 pub mod lock_macro;
 pub mod macro_fin;

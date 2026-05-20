@@ -1,6 +1,6 @@
-//! Unit tests for 03b-1 checkpoint hashing.
+//! Unit tests for Bullshark checkpoint hashing.
 
-use consensus::l2_minimal::checkpoint_hash_from_rounds;
+use consensus::bullshark::checkpoint_hash_from_rounds;
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
     dag::{CertifiedVertex, Vertex},

@@ -3,12 +3,13 @@
 use smallvec::SmallVec;
 
 use crate::{
-    action::Action, config::Config, error::Result, event::Event, host_context::HostContext,
-    l2_minimal::Book,
+    action::Action, bullshark::micro_qc::EmittedSet, config::Config, error::Result, event::Event,
+    host_context::HostContext,
 };
 
-/// Up-to-eight outgoing actions per event keeps things stack-allocated.
-pub type Actions = SmallVec<[Action; 8]>;
+/// Up-to-sixteen outgoing actions per event keeps things stack-allocated
+/// even when a full Bullshark wave commit fans out across rounds.
+pub type Actions = SmallVec<[Action; 16]>;
 
 /// Consensus state machine.
 ///
@@ -18,8 +19,9 @@ pub type Actions = SmallVec<[Action; 8]>;
 pub struct StateMachine {
     /// Active protocol parameters.
     cfg: Config,
-    /// 03b-1 relaxed L2 book (removed in 03b-2).
-    book: Book,
+    /// Checkpoint hashes for which this validator already broadcast a MicroQc.
+    /// Kept after the `l2_minimal` deletion to keep `MicroQcAssembled` idempotent.
+    emitted: EmittedSet,
 }
 
 impl StateMachine {
@@ -28,7 +30,7 @@ impl StateMachine {
     pub fn new(cfg: Config) -> Self {
         Self {
             cfg,
-            book: Book::default(),
+            emitted: EmittedSet::new(),
         }
     }
 
@@ -40,16 +42,17 @@ impl StateMachine {
 
     /// Drive one event through the state machine, returning any
     /// resulting [`Action`]s.
-    ///
-    /// In the skeleton phase this returns an empty `Actions` for every
-    /// event so downstream binaries can wire end-to-end before any
-    /// algorithm is implemented.
     pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
         match event {
-            Event::CertifiedVertexReceived(v) => {
-                crate::l2_minimal::on_certified_vertex(&mut self.book, v, ctx)
+            Event::CertifiedVertexReceived(cv) => {
+                crate::bullshark::on_certified_vertex(&mut self.emitted, &self.cfg, cv, ctx)
             }
-            Event::MicroQcAssembled(m) => crate::l2_minimal::on_micro_qc_assembled(&mut self.book, m),
+            Event::MicroQcAssembled(qc) => {
+                crate::bullshark::on_micro_qc_assembled(&mut self.emitted, qc)
+            }
+            Event::TimerFired(id) => {
+                crate::bullshark::on_timer_fired(&mut self.emitted, &self.cfg, id, ctx)
+            }
             Event::MacroProposalReceived(_) => {
                 // TODO(plan 03c): macro proposer dispatch.
                 Ok(Actions::new())
@@ -59,7 +62,6 @@ impl StateMachine {
                 Ok(Actions::new())
             }
             Event::MacroQcReceived(_) => Ok(Actions::new()),
-            Event::TimerFired(_) => Ok(Actions::new()),
             Event::ValidatorSetUpdated { .. } => Ok(Actions::new()),
             Event::SlashEvidenceFound(_) => {
                 // TODO(plan 03d): slashing evidence validation + EmitSlashEvidence.

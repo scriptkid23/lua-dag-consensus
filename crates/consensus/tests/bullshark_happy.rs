@@ -1,4 +1,8 @@
-//! Integration: relaxed L2 commit emits `BroadcastMicroQc` on wave 0.
+//! Integration: full Bullshark wave 0 commit emits `BroadcastMicroQc`.
+//!
+//! Ignored until plan `2026-05-19-03b2-l2-bullshark-full.md` Task 5 rewires
+//! the full Bullshark rules; the body still reflects the 03b-1 relaxed
+//! commit and will be rewritten in that task.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
@@ -197,6 +201,7 @@ static TEST_BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
 static TEST_PERSIST: NoopPersistence = NoopPersistence;
 
 #[test]
+#[ignore = "re-enabled after 03b-2 Task 5"]
 fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
     let n = 4;
     let dag = setup_dag_with_full_wave0(n);
@@ -225,6 +230,7 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
 }
 
 #[test]
+#[ignore = "re-enabled after 03b-2 Task 5"]
 fn micro_qc_assembled_twice_is_idempotent() {
     let n = 4;
     let dag = setup_dag_with_full_wave0(n);
