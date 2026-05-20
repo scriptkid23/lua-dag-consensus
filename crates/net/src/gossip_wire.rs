@@ -17,14 +17,6 @@ use crate::error::Result;
 use crate::gossip::Topic;
 use crate::gossip::codec::{decode_event_payload, encode_action_payload};
 
-const TOPIC_CERTIFIED_VERTEX: &str = "lua-dag/v1/certified-vertex";
-const TOPIC_MICRO_QC: &str = "lua-dag/v1/micro-qc";
-const TOPIC_MACRO_PROPOSAL: &str = "lua-dag/v1/macro-proposal";
-const TOPIC_SUBNET_AGGREGATE: &str = "lua-dag/v1/subnet-aggregate";
-const TOPIC_MACRO_QC: &str = "lua-dag/v1/macro-qc";
-const TOPIC_SLASH_EVIDENCE: &str = "lua-dag/v1/slash-evidence";
-const TOPIC_BLS_PARTIAL_PREFIX: &str = "lua-dag/v1/bls-partial/";
-
 /// Map a consensus `Action` to its gossip topic + Borsh payload.
 ///
 /// Returns `Ok(None)` for actions that are intentionally host-local
@@ -72,43 +64,47 @@ pub fn is_broadcast(action: &Action) -> bool {
 /// later). Returns `Err` on decode failure — callers may log and continue
 /// rather than terminate the swarm.
 pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
-    if topic_str == TOPIC_MICRO_QC {
-        let m: MicroQc = decode_event_payload(data)?;
-        // No dedicated `MicroQcReceived` exists today; surface as Assembled.
-        // (Pending alignment with consensus; see plan §10 for owner.)
-        return Ok(Some(Event::MicroQcAssembled(m)));
-    }
-    if topic_str == TOPIC_MACRO_PROPOSAL {
-        let m: MacroProposal = decode_event_payload(data)?;
-        return Ok(Some(Event::MacroProposalReceived(m)));
-    }
-    if topic_str == TOPIC_SUBNET_AGGREGATE {
-        let a: SubnetAggregate = decode_event_payload(data)?;
-        return Ok(Some(Event::SubnetAggregateReceived(a)));
-    }
-    if topic_str == TOPIC_MACRO_QC {
-        let q: MacroQc = decode_event_payload(data)?;
-        return Ok(Some(Event::MacroQcReceived(q)));
-    }
-    if topic_str == TOPIC_SLASH_EVIDENCE {
-        let s: SlashEvidence = decode_event_payload(data)?;
-        return Ok(Some(Event::SlashEvidenceFound(s)));
-    }
-    if let Some(rest) = topic_str.strip_prefix(TOPIC_BLS_PARTIAL_PREFIX) {
-        // Validate the subnet-id suffix is well-formed even though the
-        // authoritative SubnetId is preserved inside the payload itself.
-        let _subnet: u32 = rest.parse().map_err(|e: std::num::ParseIntError| {
-            crate::error::Error::Codec(format!("bad subnet id `{rest}`: {e}"))
-        })?;
-        let p: BlsPartial = decode_event_payload(data)?;
-        return Ok(Some(Event::BlsPartialReceived(p)));
-    }
-    if topic_str == TOPIC_CERTIFIED_VERTEX {
-        // Mode-A devnet does not produce CertifiedVertex broadcasts; subscribers
-        // ignore until L1 ingestion lands.
+    let Some(topic) = Topic::from_wire_name(topic_str) else {
         return Ok(None);
+    };
+    match topic {
+        Topic::MicroQc => {
+            let m: MicroQc = decode_event_payload(data)?;
+            // No dedicated `MicroQcReceived` exists today; surface as Assembled.
+            return Ok(Some(Event::MicroQcAssembled(m)));
+        }
+        Topic::MacroProposal => {
+            let m: MacroProposal = decode_event_payload(data)?;
+            return Ok(Some(Event::MacroProposalReceived(m)));
+        }
+        Topic::SubnetAggregate => {
+            let a: SubnetAggregate = decode_event_payload(data)?;
+            return Ok(Some(Event::SubnetAggregateReceived(a)));
+        }
+        Topic::MacroQc => {
+            let q: MacroQc = decode_event_payload(data)?;
+            return Ok(Some(Event::MacroQcReceived(q)));
+        }
+        Topic::SlashEvidence => {
+            let s: SlashEvidence = decode_event_payload(data)?;
+            return Ok(Some(Event::SlashEvidenceFound(s)));
+        }
+        Topic::BlsPartial(subnet) => {
+            let p: BlsPartial = decode_event_payload(data)?;
+            if p.subnet != subnet {
+                return Err(crate::error::Error::Codec(format!(
+                    "bls-partial topic subnet {} != payload subnet {}",
+                    subnet.0, p.subnet.0
+                )));
+            }
+            return Ok(Some(Event::BlsPartialReceived(p)));
+        }
+        Topic::CertifiedVertex => {
+            // Mode-A devnet does not produce CertifiedVertex broadcasts; subscribers
+            // ignore until L1 ingestion lands.
+            return Ok(None);
+        }
     }
-    Ok(None)
 }
 
 #[cfg(test)]
@@ -173,7 +169,7 @@ mod tests {
     #[test]
     fn certified_vertex_topic_returns_none() {
         // Subscribed but no Event mapping yet: must not error.
-        let ev = inbound_message(TOPIC_CERTIFIED_VERTEX, &[]).unwrap();
+        let ev = inbound_message(&Topic::CertifiedVertex.wire_name(), &[]).unwrap();
         assert!(ev.is_none());
     }
 

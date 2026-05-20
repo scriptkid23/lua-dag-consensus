@@ -6,4 +6,4 @@ pub mod topics;
 
 pub use codec::{decode_event_payload, encode_action_payload};
 pub use publisher::Publisher;
-pub use topics::Topic;
+pub use topics::{Topic, wire as topic_wire};
