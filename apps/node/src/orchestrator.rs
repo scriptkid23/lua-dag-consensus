@@ -12,7 +12,7 @@ use storage::RocksPersistence;
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::observability::metrics::Metrics;
+use crate::{host_context::StubHostBundle, observability::metrics::Metrics};
 
 /// Long-running orchestrator task.
 #[derive(Debug)]
@@ -23,8 +23,10 @@ pub struct Orchestrator {
     metrics: Arc<Metrics>,
     /// Channel into the live gossipsub swarm; carries broadcast actions.
     net_actions_tx: mpsc::Sender<Action>,
-    /// Pinned so we don't drop the storage handle prematurely.
-    _persistence: RocksPersistence,
+    /// Host port bundle for `StateMachine::step`.
+    host_bundle: StubHostBundle,
+    /// Rocks-backed persistence for `HostContext` and local actions.
+    persistence: RocksPersistence,
 }
 
 impl Orchestrator {
@@ -38,6 +40,7 @@ impl Orchestrator {
         persistence: RocksPersistence,
         metrics: Arc<Metrics>,
         net_actions_tx: mpsc::Sender<Action>,
+        host_bundle: StubHostBundle,
     ) -> Self {
         Self {
             sm,
@@ -45,7 +48,8 @@ impl Orchestrator {
             events_rx,
             metrics,
             net_actions_tx,
-            _persistence: persistence,
+            host_bundle,
+            persistence,
         }
     }
 
@@ -56,7 +60,11 @@ impl Orchestrator {
                 maybe_event = self.events_rx.recv() => {
                     let Some(event) = maybe_event else { break };
                     self.metrics.events_processed.inc();
-                    let actions = match self.sm.step(event) {
+                    let ctx = crate::host_context::build_host_context(
+                        &self.host_bundle,
+                        &self.persistence,
+                    );
+                    let actions = match self.sm.step(event, &ctx) {
                         Ok(a) => a,
                         Err(e) => {
                             warn!(target: "node::orchestrator", error = %e, "consensus step failed");

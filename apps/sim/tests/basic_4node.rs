@@ -14,5 +14,6 @@ fn happy_path_runs_and_replays_bit_identical() {
     assert_eq!(report.validators, 4);
     assert_eq!(report.rounds, 16);
     assert!(report.safety_ok);
+    assert!(report.liveness_ok);
     sim::replay::assert_deterministic(&args).unwrap();
 }

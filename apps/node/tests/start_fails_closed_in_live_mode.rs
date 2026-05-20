@@ -52,7 +52,7 @@ fn write_layered(dir: &std::path::Path) {
 }
 
 #[tokio::test]
-async fn live_mode_without_listen_addrs_refuses_to_start() {
+async fn live_mode_without_skeleton_flag_refuses_to_start() {
     let dir = tempdir().unwrap();
     write_layered(dir.path());
 
@@ -66,7 +66,7 @@ async fn live_mode_without_listen_addrs_refuses_to_start() {
     let err = result.expect_err("must refuse to start in live mode with empty listen");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("network_mode") && msg.contains("listen"),
+        msg.contains("allow-skeleton-network") && msg.contains("06b"),
         "unexpected error: {msg}"
     );
 }

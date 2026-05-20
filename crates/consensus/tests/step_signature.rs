@@ -1,7 +1,8 @@
-//! Smoke test: `StateMachine::step` accepts every `Event` variant and
-//! returns an empty action list under the skeleton implementation.
+//! Smoke test: `StateMachine::step` accepts every `Event` variant.
 
 use consensus::{
+    host_context::HostContext,
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
     Config, StateMachine,
     event::{BlsPartial, Event, SubnetAggregate, SubnetId, TimerId},
 };
@@ -14,6 +15,90 @@ use types::{
     slashing::{DoubleVote, SlashEvidence},
     validator::ValidatorSet,
 };
+
+struct EmptyDag;
+impl DagView for EmptyDag {
+    fn vertex(&self, _hash: &Hash32) -> consensus::Result<Option<CertifiedVertex>> {
+        Ok(None)
+    }
+    fn vertices_at_round(&self, _round: Round) -> consensus::Result<Vec<CertifiedVertex>> {
+        Ok(vec![])
+    }
+}
+
+struct FixedBeacon(Hash32);
+impl RandomnessBeacon for FixedBeacon {
+    fn current(&self) -> consensus::Result<Hash32> {
+        Ok(self.0)
+    }
+}
+
+struct EmptyValset;
+impl ValidatorSetPort for EmptyValset {
+    fn set_for(&self, _epoch: Epoch) -> consensus::Result<Option<ValidatorSet>> {
+        Ok(None)
+    }
+    fn index_of(
+        &self,
+        _epoch: Epoch,
+        _validator: &ValidatorId,
+    ) -> consensus::Result<Option<u32>> {
+        Ok(None)
+    }
+}
+
+struct NoopPersistence;
+impl Persistence for NoopPersistence {
+    fn store_micro_qc(&self, _qc: &MicroQc) -> consensus::Result<()> {
+        Ok(())
+    }
+    fn micro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<MicroQc>> {
+        Ok(None)
+    }
+    fn store_macro_checkpoint(
+        &self,
+        _cp: &MacroCheckpoint,
+    ) -> consensus::Result<()> {
+        Ok(())
+    }
+    fn store_macro_qc(&self, _qc: &MacroQc) -> consensus::Result<()> {
+        Ok(())
+    }
+    fn append_slash_evidence(&self, _ev: &SlashEvidence) -> consensus::Result<()> {
+        Ok(())
+    }
+    fn macro_checkpoint_at(
+        &self,
+        _height: Height,
+    ) -> consensus::Result<Option<MacroCheckpoint>> {
+        Ok(None)
+    }
+    fn macro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<MacroQc>> {
+        Ok(None)
+    }
+}
+
+struct TestClock;
+impl Clock for TestClock {
+    fn now_nanos(&self) -> u128 {
+        0
+    }
+}
+
+fn test_host_context() -> HostContext<'static> {
+    static DAG: EmptyDag = EmptyDag;
+    static CLOCK: TestClock = TestClock;
+    static VALSET: EmptyValset = EmptyValset;
+    static BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
+    static PERSIST: NoopPersistence = NoopPersistence;
+    HostContext {
+        dag: &DAG,
+        clock: &CLOCK,
+        valset: &VALSET,
+        beacon: &BEACON,
+        persistence: &PERSIST,
+    }
+}
 
 fn fixture_certified() -> CertifiedVertex {
     CertifiedVertex {
@@ -53,8 +138,9 @@ fn fixture_macro_qc() -> MacroQc {
 }
 
 #[test]
-fn step_returns_empty_for_every_variant() {
+fn step_returns_empty_for_non_l2_events_with_empty_dag() {
     let mut sm = StateMachine::new(Config::default_table_17_1());
+    let ctx = test_host_context();
     let events = [
         Event::CertifiedVertexReceived(fixture_certified()),
         Event::MicroQcAssembled(MicroQc {
@@ -102,7 +188,14 @@ fn step_returns_empty_for_every_variant() {
         })),
     ];
     for ev in events {
-        let actions = sm.step(ev).expect("step never errors in skeleton");
-        assert!(actions.is_empty(), "skeleton must emit zero actions");
+        let actions = sm.step(ev, &ctx).expect("step never errors");
+        assert!(actions.is_empty(), "empty dag must emit zero actions");
     }
+}
+
+#[test]
+fn step_is_total_over_event_enum() {
+    let mut sm = StateMachine::new(Config::default_table_17_1());
+    let ctx = test_host_context();
+    sm.step(Event::TimerFired(TimerId(0)), &ctx).unwrap();
 }

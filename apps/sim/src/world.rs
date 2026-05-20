@@ -2,7 +2,12 @@
 
 use std::sync::Arc;
 
-use consensus::{Config, StateMachine, ports::Clock};
+use consensus::{
+    action::Action,
+    ports::{Clock, DagView, Persistence},
+    state_machine::Actions,
+    Config, HostContext, StateMachine,
+};
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use types::{
@@ -11,8 +16,13 @@ use types::{
 };
 
 use crate::{
-    virtual_beacon::VirtualBeacon, virtual_clock::VirtualClock, virtual_dag::VirtualDag,
-    virtual_net::VirtualNet, virtual_persistence::VirtualPersistence,
+    vertex_factory::build_certified_vertex,
+    virtual_beacon::VirtualBeacon,
+    virtual_clock::VirtualClock,
+    virtual_dag::VirtualDag,
+    virtual_net::VirtualNet,
+    virtual_persistence::VirtualPersistence,
+    virtual_timer::VirtualTimer,
     virtual_validator_set::VirtualValidatorSet,
 };
 
@@ -25,7 +35,7 @@ pub struct World {
     pub net: VirtualNet,
     /// Shared clock.
     pub clock: Arc<VirtualClock>,
-    /// Shared DAG view (placeholder).
+    /// Shared DAG view.
     pub dag: Arc<VirtualDag>,
     /// Shared beacon.
     pub beacon: Arc<VirtualBeacon>,
@@ -33,10 +43,14 @@ pub struct World {
     pub persistence: Vec<Arc<VirtualPersistence>>,
     /// Validator set port (shared).
     pub valset: Arc<VirtualValidatorSet>,
-    /// Deterministic RNG used by adversaries.
+    /// Deterministic RNG used by adversaries and net fanout.
     pub rng: ChaCha20Rng,
     /// Active config (shared with all SMs).
     pub config: Config,
+    /// Monotonic tick counter; distinct from Bullshark `Round` inside vertices.
+    pub virtual_round: u64,
+    /// Deterministic timer queue.
+    pub timer: VirtualTimer,
 }
 
 impl World {
@@ -83,22 +97,121 @@ impl World {
             valset: Arc::new(VirtualValidatorSet::new(set)),
             rng: ChaCha20Rng::from_seed(seed),
             config,
+            virtual_round: 0,
+            timer: VirtualTimer::new(),
         }
     }
 
-    /// Advance the world by one micro-round.
-    pub fn tick_round(&mut self) {
-        // Deliver any due messages, then advance the clock.
-        let now = u64::try_from(self.clock.as_ref().now_nanos()).unwrap_or(u64::MAX);
-        let due = self.net.drain_due(now);
-        for msg in due {
-            let idx = msg.recipient as usize;
-            if let Some(sm) = self.machines.get_mut(idx) {
-                let _ = sm.step(msg.event);
+    fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
+        for action in actions {
+            match action {
+                Action::BroadcastMicroQc(qc) => {
+                    self.persistence[validator_idx as usize]
+                        .store_micro_qc(&qc)
+                        .expect("virtual persistence never fails");
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastMicroQc(qc),
+                        u32::try_from(self.machines.len()).expect("validator count"),
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::ScheduleTimer { id, delay_nanos } => {
+                    self.timer
+                        .schedule(
+                            now.saturating_add(
+                                u64::try_from(delay_nanos.min(u128::from(u64::MAX)))
+                                    .expect("delay fits u64"),
+                            ),
+                            id,
+                        );
+                }
+                Action::CancelTimer(id) => self.timer.cancel(id),
+                Action::PersistMacroQc(qc) => {
+                    let _ = self.persistence[validator_idx as usize].store_macro_qc(&qc);
+                }
+                Action::UpdateBlobStatus { .. } => {}
+                Action::BroadcastMacroProposal(_)
+                | Action::BroadcastBlsPartial(_)
+                | Action::BroadcastSubnetAggregate(_)
+                | Action::BroadcastMacroQc(_)
+                | Action::EmitSlashEvidence { .. } => {
+                    debug_assert!(false, "unexpected non-L2 action in 03b-1: {action:?}");
+                }
             }
         }
+    }
+
+    fn step_validator(&mut self, validator_idx: u32, event: consensus::Event, now: u64) {
+        let idx = validator_idx as usize;
+        let ctx = HostContext {
+            dag: self.dag.as_ref(),
+            clock: self.clock.as_ref(),
+            valset: self.valset.as_ref(),
+            beacon: self.beacon.as_ref(),
+            persistence: self.persistence[idx].as_ref(),
+        };
+        let actions = self.machines[idx]
+            .step(event, &ctx)
+            .unwrap_or_else(|e| panic!("validator {validator_idx} step failed: {e}"));
+        self.apply_actions(validator_idx, actions, now);
+    }
+
+    fn drain_net_and_apply(&mut self, now: u64) {
+        let due = self.net.drain_due(now);
+        for msg in due {
+            self.step_validator(msg.recipient, msg.event, now);
+        }
+    }
+
+    fn parent_hash_for_round(&self, round: u64) -> Option<types::crypto_types::Hash32> {
+        if round == 0 {
+            return None;
+        }
+        let prev = types::primitives::Round(round - 1);
+        let mut verts = self.dag.vertices_at_round(prev).unwrap_or_default();
+        verts.sort_by_key(|v| v.vertex.hash.0);
+        verts.first().map(|v| v.vertex.hash)
+    }
+
+    fn produce_vertex_tick(&mut self, now: u64) {
+        let n = u32::try_from(self.machines.len()).expect("validator count");
+        let r = self.virtual_round;
+        let proposer = r % u64::from(n);
+        let parent = self.parent_hash_for_round(r);
+        let cv = build_certified_vertex(
+            r,
+            u32::try_from(proposer).expect("proposer index"),
+            parent,
+        );
+        self.dag.insert(cv.clone());
+        for idx in 0..n {
+            self.step_validator(
+                idx,
+                consensus::Event::CertifiedVertexReceived(cv.clone()),
+                now,
+            );
+        }
+    }
+
+    fn drain_timers_and_apply(&mut self, now: u64) {
+        for id in self.timer.drain_due(now) {
+            for idx in 0..u32::try_from(self.machines.len()).expect("validator count") {
+                self.step_validator(idx, consensus::Event::TimerFired(id), now);
+            }
+        }
+    }
+
+    /// Advance the world by one micro-round (spec §5.5 order).
+    pub fn tick_round(&mut self) {
+        let now = u64::try_from(self.clock.as_ref().now_nanos()).unwrap_or(u64::MAX);
+        self.drain_net_and_apply(now);
+        self.produce_vertex_tick(now);
+        self.drain_timers_and_apply(now);
         let round_nanos = self.config.timing.round_duration_ms * 1_000_000;
         self.clock.advance(round_nanos);
+        self.virtual_round += 1;
     }
 
     /// Run `rounds` ticks.

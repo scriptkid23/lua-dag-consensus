@@ -32,6 +32,18 @@ impl VirtualPersistence {
     pub fn slash_count(&self) -> usize {
         self.slash_log.read().unwrap().len()
     }
+
+    /// True if at least one micro QC is stored (checker helper).
+    #[must_use]
+    pub fn any_micro_qc(&self) -> bool {
+        !self.micro_qcs.read().unwrap().is_empty()
+    }
+
+    /// Snapshot all stored micro QCs (checker helper).
+    #[must_use]
+    pub fn all_micro_qcs(&self) -> Vec<MicroQc> {
+        self.micro_qcs.read().unwrap().values().cloned().collect()
+    }
 }
 
 impl Persistence for VirtualPersistence {
@@ -41,6 +53,10 @@ impl Persistence for VirtualPersistence {
             .unwrap()
             .insert(qc.checkpoint_hash, qc.clone());
         Ok(())
+    }
+
+    fn micro_qc_for(&self, checkpoint_hash: &Hash32) -> consensus::Result<Option<MicroQc>> {
+        Ok(self.micro_qcs.read().unwrap().get(checkpoint_hash).cloned())
     }
 
     fn store_macro_checkpoint(&self, cp: &MacroCheckpoint) -> consensus::Result<()> {

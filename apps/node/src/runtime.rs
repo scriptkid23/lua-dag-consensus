@@ -38,12 +38,11 @@ pub fn run() -> Result<()> {
 async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     info!(target: "node", "starting LUA-DAG node");
 
-    // ─── Fail-closed startup guard (spec §8) ───────────────────────────
-    if cfg.node.network_mode == "live" && !args.allow_skeleton_network && cfg.net.listen.is_empty()
-    {
+    // ─── Fail-closed startup guard (spec §8 / plan 03b-1 Task 9) ───────
+    if cfg.node.network_mode == "live" && !args.allow_skeleton_network {
         anyhow::bail!(
-            "network_mode=\"live\" requires at least one [net].listen address \
-             (or pass --allow-skeleton-network)"
+            "network_mode=\"live\" requires --allow-skeleton-network until plan 06b \
+             wires production HostContext and L1 ingress"
         );
     }
 
@@ -112,7 +111,21 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     rpc_server::serve(&cfg.rpc_listen, rpc_shutdown).await?;
 
     // Orchestrator.
-    let orch = Orchestrator::new(sm, bridge, events_rx, persistence, metrics, net_actions_tx);
+    let valset = types::validator::ValidatorSet {
+        epoch: types::primitives::Epoch(0),
+        entries: vec![],
+        total_stake: types::primitives::StakeWeight(0),
+    };
+    let host_bundle = crate::host_context::StubHostBundle::new(valset);
+    let orch = Orchestrator::new(
+        sm,
+        bridge,
+        events_rx,
+        persistence,
+        metrics,
+        net_actions_tx,
+        host_bundle,
+    );
     let orch_task = tokio::spawn(orch.run());
 
     // Wait for signal.
@@ -214,13 +227,10 @@ pub mod test_helpers {
         // Run the same fail-closed gate as `run_async` and return its error.
         // (We do not actually start the swarm here: the test only exercises
         // the gate and does not need a tokio-multithreaded runtime.)
-        if cfg.node.network_mode == "live"
-            && !args.allow_skeleton_network
-            && cfg.net.listen.is_empty()
-        {
+        if cfg.node.network_mode == "live" && !args.allow_skeleton_network {
             anyhow::bail!(
-                "network_mode=\"live\" requires at least one [net].listen address \
-                 (or pass --allow-skeleton-network)"
+                "network_mode=\"live\" requires --allow-skeleton-network until plan 06b \
+                 wires production HostContext and L1 ingress"
             );
         }
         Ok(())

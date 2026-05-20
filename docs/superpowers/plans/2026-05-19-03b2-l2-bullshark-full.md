@@ -38,9 +38,16 @@
 
 - [ ] **Step 1: Delete `l2_minimal` module; remove `book` field from `StateMachine`**
 
+Move the `emitted_micro_qc: HashSet<Hash32>` idempotency set from `Book` into a new `crate::bullshark::micro_qc::EmittedSet` field on `StateMachine` (keep `MicroQcAssembled` idempotent across the deletion — `Book`'s only surviving responsibility). All other `Book` state (wave_status, seen) is rebuilt from `DagView`.
+
 - [ ] **Step 2: `step` calls stub `bullshark` handlers that return empty until Tasks 2–5 land**
 
-Temporarily expect `happy_path` to fail — track in CI only after Task 7.
+To keep `cargo test --workspace --locked` green throughout 03b-2 execution:
+
+- Mark `apps/sim/src/scenarios/happy_path.rs` (and the consensus test `bullshark_happy`) `#[ignore = "re-enabled after 03b-2 Task 5"]`.
+- Re-enable both in Task 5 Step 5 (remove the `#[ignore]` along with rewriting the test).
+
+This keeps each task's commit boundary green; readers running `cargo test` between tasks should see the ignored count rise and fall, not failures.
 
 - [ ] **Step 3: Commit**
 
@@ -132,7 +139,9 @@ Inject `ScheduleTimer` from SM; sim delivers timer after `slow_path_round_count`
 anchor/wave state update → try commit → linearize → micro_qc.try_finalize → BroadcastMicroQc
 ```
 
-- [ ] **Step 3: Keep `MicroQcAssembled` idempotent (reuse 03b-1 behavior in book or micro_qc module)**
+- [ ] **Step 3: Keep `MicroQcAssembled` idempotent**
+
+State home: `bullshark::micro_qc::EmittedSet` on `StateMachine` (created in Task 1 Step 1). On `MicroQcAssembled(qc)`, if `qc.checkpoint_hash` is already in the set, return `Actions::new()` — peer-merge only, no re-broadcast.
 
 - [ ] **Step 4: Count max actions per event in tests; if >8, bump `Actions` type:**
 
@@ -141,6 +150,8 @@ pub type Actions = SmallVec<[Action; 16]>;
 ```
 
 - [ ] **Step 5: Rewrite `l2_minimal_happy` → `bullshark_happy` with full rules**
+
+Remove the `#[ignore]` placed on `bullshark_happy` and on `apps/sim/src/scenarios/happy_path.rs` in Task 1 Step 2 in the same commit as the rewrite.
 
 - [ ] **Step 6: `cargo test -p consensus --locked` — PASS**
 
@@ -156,7 +167,7 @@ pub type Actions = SmallVec<[Action; 16]>;
 
 - [ ] **Step 1: For each virtual round, emit `2f+1` vertices from distinct validators** (equal stake)
 
-Proposers: `(r + i) % n` for `i in 0..=2f`.
+Proposers: `(r + i) % n` for `i in 0..=2f`. Vertex hash recipe must include the **author** (it already does — `vertex_hash(round, &author)` from 03b-1 Task 6), so sibling vertices in the same round produce distinct hashes; no collision risk under the multi-vertex factory.
 
 - [ ] **Step 2: Parents link to prior round smallest hash (same as 03b-1)**
 

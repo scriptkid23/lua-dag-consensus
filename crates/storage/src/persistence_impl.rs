@@ -46,6 +46,10 @@ impl Persistence for RocksPersistence {
         micro_store::put_qc(&self.db, qc).map_err(|e| map_err(&e))
     }
 
+    fn micro_qc_for(&self, checkpoint_hash: &Hash32) -> consensus::Result<Option<MicroQc>> {
+        micro_store::get_qc(&self.db, checkpoint_hash).map_err(|e| map_err(&e))
+    }
+
     fn store_macro_checkpoint(&self, cp: &MacroCheckpoint) -> consensus::Result<()> {
         macro_store::put_checkpoint(&self.db, cp).map_err(|e| map_err(&e))
     }
@@ -107,6 +111,22 @@ mod tests {
         p.store_macro_checkpoint(&cp).unwrap();
         let got = p.macro_checkpoint_at(Height(7)).unwrap();
         assert_eq!(got, Some(cp));
+    }
+
+    #[test]
+    fn store_and_fetch_micro_qc_via_trait() {
+        let db = fresh_db();
+        let p = RocksPersistence::new(db);
+        let qc = types::micro::MicroQc {
+            checkpoint_hash: Hash32([4; 32]),
+            agg: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        p.store_micro_qc(&qc).unwrap();
+        let got = p.micro_qc_for(&Hash32([4; 32])).unwrap();
+        assert_eq!(got, Some(qc));
     }
 
     #[test]

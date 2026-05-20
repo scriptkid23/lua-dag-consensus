@@ -33,3 +33,14 @@ pub fn put_qc(db: &Database, qc: &MicroQc) -> Result<()> {
     let bytes = borsh::to_vec(qc).map_err(|e| Error::Codec(e.to_string()))?;
     db.put_raw(ColumnFamily::MicroQc, &key, &bytes)
 }
+
+/// Fetch a micro QC by `checkpoint_hash`.
+pub fn get_qc(db: &Database, checkpoint_hash: &types::crypto_types::Hash32) -> Result<Option<MicroQc>> {
+    let key = keys::hash(checkpoint_hash);
+    match db.get_raw(ColumnFamily::MicroQc, &key)? {
+        Some(bytes) => borsh::from_slice(&bytes)
+            .map(Some)
+            .map_err(|e| Error::Codec(e.to_string())),
+        None => Ok(None),
+    }
+}

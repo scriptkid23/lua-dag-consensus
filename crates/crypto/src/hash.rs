@@ -29,6 +29,9 @@ pub mod dst {
     /// blake3 input is hashed with this prefix before supplying bytes
     /// to libp2p Ed25519 key material.
     pub const DEVNET_PEER_IDENTITY: &[u8] = b"lua-dag/v1/devnet-peer-identity";
+    /// Sim-only vertex hashing (factory in `apps/sim`). Distinct from
+    /// [`CONTENT_HASH`] to keep production and sim namespaces isolated.
+    pub const SIM_VERTEX_HASH: &[u8] = b"lua-dag/v1/sim-vertex-hash";
 }
 
 /// Blake3-256 over `data` with a DST prefix.

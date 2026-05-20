@@ -15,6 +15,9 @@ pub trait Persistence: Send + Sync {
     /// Persist a MicroQc.
     fn store_micro_qc(&self, qc: &MicroQc) -> Result<()>;
 
+    /// Return a stored MicroQc by checkpoint hash, if any.
+    fn micro_qc_for(&self, checkpoint_hash: &Hash32) -> Result<Option<MicroQc>>;
+
     /// Persist a MacroCheckpoint.
     fn store_macro_checkpoint(&self, cp: &MacroCheckpoint) -> Result<()>;
 

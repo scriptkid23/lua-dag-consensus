@@ -10,6 +10,7 @@
 pub mod args;
 pub mod config;
 pub mod config_layers;
+pub mod host_context;
 pub mod observability;
 pub mod orchestrator;
 pub mod rpc_server;

@@ -16,6 +16,6 @@ pub fn run(validators: u32, rounds: u32, seed: [u8; 32]) -> Report {
         safety_ok: checker::safety::check(&world).is_ok(),
         liveness_ok: checker::liveness::check(&world).is_ok(),
         lock_macro_ok: checker::lock_macro::check(&world).is_ok(),
-        notes: vec![],
+        notes: vec!["lock_macro_skipped_until_03c".into()],
     }
 }

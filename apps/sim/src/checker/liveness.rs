@@ -1,11 +1,15 @@
-//! "Eventually some macro is finalized." Skeleton: trivially true.
+//! After the scenario, at least one validator stored a `MicroQc`.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::world::World;
 
 /// Run the liveness check.
-#[allow(clippy::unnecessary_wraps)]
-pub fn check(_world: &World) -> Result<()> {
-    Ok(())
+pub fn check(world: &World) -> Result<()> {
+    let any = world.persistence.iter().any(|p| p.any_micro_qc());
+    if any {
+        Ok(())
+    } else {
+        bail!("no validator stored a MicroQc after the run")
+    }
 }

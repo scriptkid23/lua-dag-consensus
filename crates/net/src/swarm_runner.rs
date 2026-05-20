@@ -123,7 +123,7 @@ pub async fn spawn_gossip_tasks(
                 }
             }
             Err(e) => {
-                tracing::warn!(target: "net::swarm", addr = %addr, error = %e, "invalid bootstrap multiaddr")
+                tracing::warn!(target: "net::swarm", addr = %addr, error = %e, "invalid bootstrap multiaddr");
             }
         }
     }

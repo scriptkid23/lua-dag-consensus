@@ -6,6 +6,7 @@ use clap::Parser;
 
 mod args;
 mod commands;
+mod stub_context;
 
 fn main() -> Result<()> {
     let cli = args::Cli::parse();

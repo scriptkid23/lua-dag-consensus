@@ -46,17 +46,26 @@ impl VirtualNet {
     /// Translate an outbound `Action` from `sender` into events for every
     /// recipient that should receive it. Skeleton: drops every action
     /// type (mirrors `net::bridge`'s skeleton). Plan 03b+ extends this.
-    #[allow(clippy::unused_self)] // skeleton will use `self` when mapping broadcasts
     pub fn enqueue_from_action(
         &mut self,
-        _sender: u32,
-        _action: &Action,
-        _validator_count: u32,
-        _now: u64,
+        sender: u32,
+        action: &Action,
+        validator_count: u32,
+        now: u64,
         _rng: &mut ChaCha20Rng,
     ) {
-        // Skeleton no-op. When consensus algorithms emit actions, this
-        // method maps broadcasts to per-validator deliveries.
+        if let Action::BroadcastMicroQc(qc) = action {
+            for recipient in 0..validator_count {
+                if recipient == sender {
+                    continue;
+                }
+                self.enqueue(InFlight {
+                    recipient,
+                    event: Event::MicroQcAssembled(qc.clone()),
+                    deliver_at: now,
+                });
+            }
+        }
     }
 
     /// Push a raw message (used directly by adversaries).
