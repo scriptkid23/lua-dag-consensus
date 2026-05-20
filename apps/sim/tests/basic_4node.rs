@@ -3,7 +3,6 @@
 use sim::args::{Args, Scenario};
 
 #[test]
-#[ignore = "re-enabled after 03b-2 Task 5"]
 fn happy_path_runs_and_replays_bit_identical() {
     let args = Args {
         validators: 4,

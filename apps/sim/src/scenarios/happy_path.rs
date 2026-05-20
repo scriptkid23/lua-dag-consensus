@@ -2,12 +2,16 @@
 
 use consensus::Config;
 
-use crate::{checker, scenarios::Report, world::World};
+use crate::{adversary::network::NetworkConditions, checker, scenarios::Report, world::World};
 
 /// Run the scenario.
 #[must_use]
 pub fn run(validators: u32, rounds: u32, seed: [u8; 32]) -> Report {
-    let mut world = World::new(validators, seed, Config::default_table_17_1());
+    let cfg = Config::default_table_17_1();
+    let mut world = World::new(validators, seed, cfg.clone());
+    world.set_network_conditions(NetworkConditions::with_round_jitter(
+        cfg.timing.round_duration_ms,
+    ));
     world.run(rounds);
     Report {
         scenario: "happy_path".into(),
@@ -16,6 +20,9 @@ pub fn run(validators: u32, rounds: u32, seed: [u8; 32]) -> Report {
         safety_ok: checker::safety::check(&world).is_ok(),
         liveness_ok: checker::liveness::check(&world).is_ok(),
         lock_macro_ok: checker::lock_macro::check(&world).is_ok(),
-        notes: vec!["lock_macro_skipped_until_03c".into()],
+        notes: vec![
+            "lock_macro_skipped_until_03c".into(),
+            "network_jitter_from_round_duration".into(),
+        ],
     }
 }

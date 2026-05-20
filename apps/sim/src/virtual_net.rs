@@ -1,10 +1,60 @@
 //! In-memory deterministic message bus.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use consensus::{action::Action, event::Event};
 use rand::Rng;
 use rand_chacha::ChaCha20Rng;
+
+use crate::adversary::network::NetworkConditions;
+
+/// Two-partition network split; cross-partition delivery blocked while active.
+#[derive(Clone, Debug, Default)]
+pub struct Partition {
+    /// Validators on the left side.
+    left: HashSet<u32>,
+    /// Validators on the right side.
+    right: HashSet<u32>,
+    /// When false, all pairs may communicate.
+    active: bool,
+}
+
+impl Partition {
+    /// Build an active partition from two disjoint sides.
+    #[must_use]
+    pub fn new(
+        left: impl IntoIterator<Item = u32>,
+        right: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self {
+            left: left.into_iter().collect(),
+            right: right.into_iter().collect(),
+            active: true,
+        }
+    }
+
+    /// Resume cross-partition delivery.
+    pub fn heal(&mut self) {
+        self.active = false;
+    }
+
+    /// True when `active` is set.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Whether a message from `sender` may be delivered to `recipient`.
+    #[must_use]
+    pub fn allows(&self, sender: u32, recipient: u32) -> bool {
+        if !self.active {
+            return true;
+        }
+        let same_side = (self.left.contains(&sender) && self.left.contains(&recipient))
+            || (self.right.contains(&sender) && self.right.contains(&recipient));
+        same_side
+    }
+}
 
 /// One in-flight network message.
 #[derive(Clone, Debug)]
@@ -18,14 +68,28 @@ pub struct InFlight {
 }
 
 /// Deterministic message queue.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct VirtualNet {
     /// Pending messages, sorted by `deliver_at`.
     pending: VecDeque<InFlight>,
+    /// Latency / drop / duplicate policy.
+    conditions: NetworkConditions,
+    /// Optional partition split.
+    partition: Option<Partition>,
+}
+
+impl Default for VirtualNet {
+    fn default() -> Self {
+        Self {
+            pending: VecDeque::new(),
+            conditions: NetworkConditions::perfect(),
+            partition: None,
+        }
+    }
 }
 
 impl VirtualNet {
-    /// New empty bus.
+    /// New empty bus with perfect delivery.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -43,29 +107,82 @@ impl VirtualNet {
         self.pending.is_empty()
     }
 
+    /// Active network conditions (latency, drop, duplicate).
+    #[must_use]
+    pub fn conditions(&self) -> NetworkConditions {
+        self.conditions
+    }
+
+    /// Replace network conditions.
+    pub fn set_conditions(&mut self, conditions: NetworkConditions) {
+        self.conditions = conditions;
+    }
+
+    /// Install a two-way partition.
+    pub fn set_partition(
+        &mut self,
+        left: impl IntoIterator<Item = u32>,
+        right: impl IntoIterator<Item = u32>,
+    ) {
+        self.partition = Some(Partition::new(left, right));
+    }
+
+    /// Heal the active partition, if any.
+    pub fn heal_partition(&mut self) {
+        if let Some(p) = &mut self.partition {
+            p.heal();
+        }
+    }
+
+    /// True when a partition is installed and still active.
+    #[must_use]
+    pub fn partition_active(&self) -> bool {
+        self.partition
+            .as_ref()
+            .is_some_and(Partition::is_active)
+    }
+
     /// Translate an outbound `Action` from `sender` into events for every
-    /// recipient that should receive it. Skeleton: drops every action
-    /// type (mirrors `net::bridge`'s skeleton). Plan 03b+ extends this.
+    /// recipient that should receive it.
     pub fn enqueue_from_action(
         &mut self,
         sender: u32,
         action: &Action,
         validator_count: u32,
         now: u64,
-        _rng: &mut ChaCha20Rng,
+        rng: &mut ChaCha20Rng,
     ) {
         if let Action::BroadcastMicroQc(qc) = action {
             for recipient in 0..validator_count {
                 if recipient == sender {
                     continue;
                 }
-                self.enqueue(InFlight {
+                if !self.allows_delivery(sender, recipient) {
+                    continue;
+                }
+                let deliver_at = now
+                    .saturating_add(self.conditions.base_delay_ns)
+                    .saturating_add(jitter_nanos(rng, self.conditions.max_delay_ns));
+                let msg = InFlight {
                     recipient,
                     event: Event::MicroQcAssembled(qc.clone()),
-                    deliver_at: now,
-                });
+                    deliver_at,
+                };
+                let (maybe, duplicate) = self.conditions.perturb(rng, msg);
+                if let Some(m) = maybe {
+                    self.enqueue(m);
+                }
+                if let Some(d) = duplicate {
+                    self.enqueue(d);
+                }
             }
         }
+    }
+
+    fn allows_delivery(&self, sender: u32, recipient: u32) -> bool {
+        self.partition
+            .as_ref()
+            .is_none_or(|p| p.allows(sender, recipient))
     }
 
     /// Push a raw message (used directly by adversaries).
@@ -94,7 +211,11 @@ impl VirtualNet {
 /// Helper: inject network jitter using the provided RNG, returning a
 /// delay in nanoseconds. Determinism comes from the caller's RNG.
 pub fn jitter_nanos(rng: &mut ChaCha20Rng, max: u64) -> u64 {
-    rng.gen_range(0..=max)
+    if max == 0 {
+        0
+    } else {
+        rng.gen_range(0..=max)
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +249,38 @@ mod tests {
         let mut a = ChaCha20Rng::from_seed([7; 32]);
         let mut b = ChaCha20Rng::from_seed([7; 32]);
         assert_eq!(jitter_nanos(&mut a, 100), jitter_nanos(&mut b, 100));
+    }
+
+    #[test]
+    fn partition_blocks_cross_side_micro_qc() {
+        let mut net = VirtualNet::new();
+        net.set_partition([0, 1], [2, 3]);
+        let mut rng = ChaCha20Rng::from_seed([1; 32]);
+        use types::{
+            crypto_types::{BlsAggSig, BlsSig, Hash32},
+            micro::MicroQc,
+        };
+        let qc = MicroQc {
+            checkpoint_hash: Hash32([0xAB; 32]),
+            agg: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        net.enqueue_from_action(0, &Action::BroadcastMicroQc(qc), 4, 0, &mut rng);
+        assert_eq!(net.len(), 1);
+        assert_eq!(net.pending[0].recipient, 1);
+    }
+
+    #[test]
+    fn heal_restores_cross_partition_delivery() {
+        let mut net = VirtualNet::new();
+        net.set_partition([0], [1]);
+        let mut p = Partition::new([0], [1]);
+        assert!(!p.allows(0, 1));
+        p.heal();
+        assert!(p.allows(0, 1));
+        net.heal_partition();
+        assert!(!net.partition_active());
     }
 }

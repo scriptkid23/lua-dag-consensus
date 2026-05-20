@@ -4,19 +4,22 @@ use std::sync::Arc;
 
 use consensus::{
     action::Action,
-    ports::{Clock, DagView, Persistence},
+    bullshark::{select_anchor, WaveId},
+    ports::{Clock, DagView, Persistence, ValidatorSetPort},
     state_machine::Actions,
     Config, HostContext, StateMachine,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use types::{
-    primitives::{Epoch, StakeWeight, ValidatorId},
+    crypto_types::Hash32,
+    primitives::{Epoch, Round, StakeWeight, ValidatorId},
     validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet},
 };
 
 use crate::{
-    vertex_factory::build_certified_vertex,
+    adversary::network::NetworkConditions,
+    vertex_factory::build_quorum_vertices_for_round,
     virtual_beacon::VirtualBeacon,
     virtual_clock::VirtualClock,
     virtual_dag::VirtualDag,
@@ -51,6 +54,8 @@ pub struct World {
     pub virtual_round: u64,
     /// Deterministic timer queue.
     pub timer: VirtualTimer,
+    /// When set, anchor-round vertices are never inserted or delivered.
+    pub anchor_withhold: bool,
 }
 
 impl World {
@@ -99,7 +104,32 @@ impl World {
             config,
             virtual_round: 0,
             timer: VirtualTimer::new(),
+            anchor_withhold: false,
         }
+    }
+
+    /// Withhold the ECVRF anchor vertex each wave (simulates anchor DoS).
+    pub fn enable_anchor_withhold(&mut self) {
+        self.anchor_withhold = true;
+    }
+
+    /// Configure network latency / drop / duplicate behaviour.
+    pub fn set_network_conditions(&mut self, conditions: NetworkConditions) {
+        self.net.set_conditions(conditions);
+    }
+
+    /// Split validators into two partitions; cross-partition gossip blocked.
+    pub fn set_partition(
+        &mut self,
+        left: impl IntoIterator<Item = u32>,
+        right: impl IntoIterator<Item = u32>,
+    ) {
+        self.net.set_partition(left, right);
+    }
+
+    /// Resume cross-partition delivery.
+    pub fn heal_partition(&mut self) {
+        self.net.heal_partition();
     }
 
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
@@ -165,11 +195,36 @@ impl World {
         }
     }
 
-    fn parent_hash_for_round(&self, round: u64) -> Option<types::crypto_types::Hash32> {
+    fn anchor_hash_for_wave(&self, wave: WaveId) -> Option<Hash32> {
+        let set = self.valset.set_for(Epoch(0)).ok()??;
+        let choice = select_anchor(
+            wave,
+            &set,
+            self.beacon.as_ref(),
+            &self.config.leader,
+        )
+        .ok()?;
+        let anchor_round = wave.first_round();
+        self.dag
+            .vertices_at_round(anchor_round)
+            .ok()?
+            .into_iter()
+            .find(|v| v.vertex.author == choice.author)
+            .map(|v| v.vertex.hash)
+    }
+
+    fn parent_hash_for_round(&self, round: u64) -> Option<Hash32> {
         if round == 0 {
             return None;
         }
-        let prev = types::primitives::Round(round - 1);
+        let wave = WaveId::of_round(Round(round));
+        let anchor_round = wave.first_round().0;
+        if round > anchor_round {
+            if let Some(h) = self.anchor_hash_for_wave(wave) {
+                return Some(h);
+            }
+        }
+        let prev = Round(round - 1);
         let mut verts = self.dag.vertices_at_round(prev).unwrap_or_default();
         verts.sort_by_key(|v| v.vertex.hash.0);
         verts.first().map(|v| v.vertex.hash)
@@ -178,20 +233,49 @@ impl World {
     fn produce_vertex_tick(&mut self, now: u64) {
         let n = u32::try_from(self.machines.len()).expect("validator count");
         let r = self.virtual_round;
-        let proposer = r % u64::from(n);
         let parent = self.parent_hash_for_round(r);
-        let cv = build_certified_vertex(
-            r,
-            u32::try_from(proposer).expect("proposer index"),
-            parent,
-        );
-        self.dag.insert(cv.clone());
-        for idx in 0..n {
-            self.step_validator(
-                idx,
-                consensus::Event::CertifiedVertexReceived(cv.clone()),
-                now,
-            );
+        let batch = build_quorum_vertices_for_round(r, n, parent);
+
+        let withheld_author = if self.anchor_withhold {
+            let wave = WaveId::of_round(Round(r));
+            if r == wave.first_round().0 {
+                let set = self
+                    .valset
+                    .set_for(Epoch(0))
+                    .ok()
+                    .flatten()
+                    .expect("validator set for anchor withhold");
+                select_anchor(
+                    wave,
+                    &set,
+                    self.beacon.as_ref(),
+                    &self.config.leader,
+                )
+                .ok()
+                .map(|choice| choice.author)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut delivered = Vec::new();
+        for cv in batch {
+            if withheld_author.is_some_and(|author| cv.vertex.author == author) {
+                continue;
+            }
+            self.dag.insert(cv.clone());
+            delivered.push(cv);
+        }
+        for cv in delivered {
+            for idx in 0..n {
+                self.step_validator(
+                    idx,
+                    consensus::Event::CertifiedVertexReceived(cv.clone()),
+                    now,
+                );
+            }
         }
     }
 
