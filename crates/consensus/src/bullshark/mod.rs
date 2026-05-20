@@ -18,7 +18,7 @@ pub mod linearize;
 pub mod micro_qc;
 pub mod wave;
 
-pub use anchor::AnchorChoice;
+pub use anchor::{select_anchor, AnchorChoice};
 pub use commit::{CommitDecision, CommitPath};
 pub use linearize::{
     checkpoint_hash_from_linearization, checkpoint_hash_from_rounds, Linearization,
