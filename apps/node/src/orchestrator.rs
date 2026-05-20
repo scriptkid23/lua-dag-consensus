@@ -78,6 +78,7 @@ impl Orchestrator {
                             // rather drop one broadcast and keep consensus
                             // running than deadlock the orchestrator.
                             if let Err(e) = self.net_actions_tx.try_send(action) {
+                                self.metrics.actions_dropped.inc();
                                 warn!(target: "node::orchestrator", error = %e, "net actions channel full; dropping broadcast");
                             }
                         } else if let Err(e) = Bridge::translate_action(&action) {

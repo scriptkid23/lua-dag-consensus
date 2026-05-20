@@ -8,7 +8,7 @@ use consensus::{StateMachine, action::Action};
 use net::Bridge;
 use storage::{Database, RocksPersistence};
 use tokio::sync::{mpsc, watch};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     args::Args,
@@ -87,10 +87,19 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         // Fan-in swarm events into the consensus events channel.
         let mut events_rx_swarm = spawn.events_rx;
         let events_tx_for_swarm = events_tx.clone();
+        let metrics_fanin = metrics.clone();
         tokio::spawn(async move {
             while let Some(ev) = events_rx_swarm.recv().await {
-                if events_tx_for_swarm.send(ev).await.is_err() {
-                    break;
+                match events_tx_for_swarm.try_send(ev) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        metrics_fanin.events_dropped.inc();
+                        warn!(
+                            target: "node::runtime",
+                            "consensus events channel full; dropping inbound gossip event",
+                        );
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
                 }
             }
         });

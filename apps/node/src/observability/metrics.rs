@@ -11,6 +11,10 @@ pub struct Metrics {
     pub events_processed: IntCounter,
     /// Count of `consensus::Action`s the orchestrator dispatched.
     pub actions_dispatched: IntCounter,
+    /// Inbound gossip events dropped because the orchestrator queue was full.
+    pub events_dropped: IntCounter,
+    /// Outbound broadcast actions dropped because the swarm queue was full.
+    pub actions_dropped: IntCounter,
 }
 
 impl Metrics {
@@ -26,11 +30,23 @@ impl Metrics {
             "Number of consensus actions dispatched by the orchestrator",
         )?;
         registry.register(Box::new(events_processed.clone()))?;
+        let events_dropped = IntCounter::new(
+            "node_events_dropped_total",
+            "Inbound consensus events dropped due to a full orchestrator queue",
+        )?;
+        let actions_dropped = IntCounter::new(
+            "node_actions_dropped_total",
+            "Outbound broadcast actions dropped due to a full swarm queue",
+        )?;
         registry.register(Box::new(actions_dispatched.clone()))?;
+        registry.register(Box::new(events_dropped.clone()))?;
+        registry.register(Box::new(actions_dropped.clone()))?;
         Ok(Self {
             registry,
             events_processed,
             actions_dispatched,
+            events_dropped,
+            actions_dropped,
         })
     }
 

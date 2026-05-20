@@ -232,9 +232,21 @@ pub async fn spawn_gossip_tasks(
                             match gossip_wire::inbound_message(message.topic.as_str(), &message.data)
                             {
                                 Ok(Some(event)) => {
-                                    if events_tx.send(event).await.is_err() {
-                                        tracing::warn!("events_rx dropped; shutting swarm task");
-                                        break;
+                                    match events_tx.try_send(event) {
+                                        Ok(()) => {}
+                                        Err(mpsc::error::TrySendError::Full(_)) => {
+                                            tracing::warn!(
+                                                target: "net::swarm",
+                                                "swarm event buffer full; dropping inbound gossip event",
+                                            );
+                                        }
+                                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                                            tracing::warn!(
+                                                target: "net::swarm",
+                                                "events_rx dropped; shutting swarm task",
+                                            );
+                                            break;
+                                        }
                                     }
                                 }
                                 Ok(None) => {} // topic recognized but no Event mapping yet
