@@ -22,10 +22,7 @@ pub struct Partition {
 impl Partition {
     /// Build an active partition from two disjoint sides.
     #[must_use]
-    pub fn new(
-        left: impl IntoIterator<Item = u32>,
-        right: impl IntoIterator<Item = u32>,
-    ) -> Self {
+    pub fn new(left: impl IntoIterator<Item = u32>, right: impl IntoIterator<Item = u32>) -> Self {
         Self {
             left: left.into_iter().collect(),
             right: right.into_iter().collect(),
@@ -50,9 +47,8 @@ impl Partition {
         if !self.active {
             return true;
         }
-        let same_side = (self.left.contains(&sender) && self.left.contains(&recipient))
-            || (self.right.contains(&sender) && self.right.contains(&recipient));
-        same_side
+        (self.left.contains(&sender) && self.left.contains(&recipient))
+            || (self.right.contains(&sender) && self.right.contains(&recipient))
     }
 }
 
@@ -137,9 +133,7 @@ impl VirtualNet {
     /// True when a partition is installed and still active.
     #[must_use]
     pub fn partition_active(&self) -> bool {
-        self.partition
-            .as_ref()
-            .is_some_and(Partition::is_active)
+        self.partition.as_ref().is_some_and(Partition::is_active)
     }
 
     /// Translate an outbound `Action` from `sender` into events for every
@@ -211,17 +205,17 @@ impl VirtualNet {
 /// Helper: inject network jitter using the provided RNG, returning a
 /// delay in nanoseconds. Determinism comes from the caller's RNG.
 pub fn jitter_nanos(rng: &mut ChaCha20Rng, max: u64) -> u64 {
-    if max == 0 {
-        0
-    } else {
-        rng.gen_range(0..=max)
-    }
+    if max == 0 { 0 } else { rng.gen_range(0..=max) }
 }
 
 #[cfg(test)]
 mod tests {
     use consensus::event::TimerId;
     use rand::SeedableRng;
+    use types::{
+        crypto_types::{BlsAggSig, BlsSig, Hash32},
+        micro::MicroQc,
+    };
 
     use super::*;
 
@@ -256,10 +250,6 @@ mod tests {
         let mut net = VirtualNet::new();
         net.set_partition([0, 1], [2, 3]);
         let mut rng = ChaCha20Rng::from_seed([1; 32]);
-        use types::{
-            crypto_types::{BlsAggSig, BlsSig, Hash32},
-            micro::MicroQc,
-        };
         let qc = MicroQc {
             checkpoint_hash: Hash32([0xAB; 32]),
             agg: BlsAggSig {

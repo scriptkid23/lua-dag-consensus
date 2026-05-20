@@ -19,9 +19,7 @@ pub fn run(args: &ReplayArgs) -> Result<()> {
     let ctx = crate::stub_context::replay_host_context();
     let mut total_actions = 0usize;
     for (i, ev) in events.into_iter().enumerate() {
-        let actions = sm
-            .step(ev, &ctx)
-            .with_context(|| format!("step #{i}"))?;
+        let actions = sm.step(ev, &ctx).with_context(|| format!("step #{i}"))?;
         total_actions += actions.len();
     }
     println!("replay-ok actions_emitted={total_actions}");

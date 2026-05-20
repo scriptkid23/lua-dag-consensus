@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 use consensus::{
-    bullshark::linearize::{checkpoint_hash_from_linearization, Linearization},
+    bullshark::linearize::{Linearization, checkpoint_hash_from_linearization},
     ports::DagView,
 };
 use types::{
@@ -29,10 +29,7 @@ impl DagView for HashMapDag {
         Ok(self.by_hash.read().unwrap().get(hash).cloned())
     }
 
-    fn vertices_at_round(
-        &self,
-        _round: Round,
-    ) -> consensus::Result<Vec<CertifiedVertex>> {
+    fn vertices_at_round(&self, _round: Round) -> consensus::Result<Vec<CertifiedVertex>> {
         Ok(vec![])
     }
 }

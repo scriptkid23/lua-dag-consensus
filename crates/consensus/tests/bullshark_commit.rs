@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
 use consensus::{
+    Config, HostContext,
     bullshark::{
-        commit::{try_commit_wave, CommitPath},
+        commit::{CommitPath, try_commit_wave},
         select_anchor,
         wave::WaveId,
     },
     ports::{DagView, RandomnessBeacon},
-    Config, HostContext,
 };
 use crypto::hash::{blake3_with_dst, dst};
 use types::{
@@ -86,11 +86,7 @@ impl consensus::ports::ValidatorSetPort for TestValset {
             Ok(None)
         }
     }
-    fn index_of(
-        &self,
-        epoch: Epoch,
-        validator: &ValidatorId,
-    ) -> consensus::Result<Option<u32>> {
+    fn index_of(&self, epoch: Epoch, validator: &ValidatorId) -> consensus::Result<Option<u32>> {
         if self.0.epoch != epoch {
             return Ok(None);
         }
@@ -108,10 +104,7 @@ impl consensus::ports::Persistence for NoopPersistence {
     fn store_micro_qc(&self, _qc: &types::micro::MicroQc) -> consensus::Result<()> {
         Ok(())
     }
-    fn micro_qc_for(
-        &self,
-        _h: &Hash32,
-    ) -> consensus::Result<Option<types::micro::MicroQc>> {
+    fn micro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<types::micro::MicroQc>> {
         Ok(None)
     }
     fn store_macro_checkpoint(
@@ -123,10 +116,7 @@ impl consensus::ports::Persistence for NoopPersistence {
     fn store_macro_qc(&self, _qc: &types::macros::MacroQc) -> consensus::Result<()> {
         Ok(())
     }
-    fn append_slash_evidence(
-        &self,
-        _ev: &types::slashing::SlashEvidence,
-    ) -> consensus::Result<()> {
+    fn append_slash_evidence(&self, _ev: &types::slashing::SlashEvidence) -> consensus::Result<()> {
         Ok(())
     }
     fn macro_checkpoint_at(
@@ -135,10 +125,7 @@ impl consensus::ports::Persistence for NoopPersistence {
     ) -> consensus::Result<Option<types::macros::MacroCheckpoint>> {
         Ok(None)
     }
-    fn macro_qc_for(
-        &self,
-        _h: &Hash32,
-    ) -> consensus::Result<Option<types::macros::MacroQc>> {
+    fn macro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<types::macros::MacroQc>> {
         Ok(None)
     }
 }

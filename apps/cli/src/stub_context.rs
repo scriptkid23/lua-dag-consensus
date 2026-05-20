@@ -1,9 +1,9 @@
 //! Minimal [`consensus::HostContext`] for skeleton replay (plan 03b-1 Task 10).
 
 use consensus::{
+    Result,
     host_context::HostContext,
     ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
-    Result,
 };
 use types::{
     crypto_types::Hash32,

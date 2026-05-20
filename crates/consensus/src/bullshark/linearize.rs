@@ -20,10 +20,7 @@ impl Linearization {
     ///
     /// The returned order is **anchor-first**, then each layer of parents
     /// in increasing `Hash32` order. Cycle-safe via a visited set.
-    pub fn closure_of_anchor(
-        anchor_hash: Hash32,
-        dag: &dyn DagView,
-    ) -> Result<Self> {
+    pub fn closure_of_anchor(anchor_hash: Hash32, dag: &dyn DagView) -> Result<Self> {
         let mut visited: HashSet<Hash32> = HashSet::new();
         let mut order: Vec<Hash32> = Vec::new();
         let mut queue: VecDeque<Hash32> = VecDeque::new();

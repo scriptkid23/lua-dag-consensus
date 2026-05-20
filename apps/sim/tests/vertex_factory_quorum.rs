@@ -1,10 +1,11 @@
 //! Multi-vertex factory: each round carries a `2f+1` quorum.
 
-use consensus::{bullshark::WaveId, ports::{DagView, ValidatorSetPort}, Config};
-use sim::{
-    vertex_factory::quorum_vertex_count,
-    world::World,
+use consensus::{
+    Config,
+    bullshark::WaveId,
+    ports::{DagView, ValidatorSetPort},
 };
+use sim::{vertex_factory::quorum_vertex_count, world::World};
 use types::primitives::Round;
 
 #[test]
@@ -15,10 +16,7 @@ fn one_wave_has_quorum_vertices_per_round() {
     world.run(4);
 
     for r in 0..4 {
-        let verts = world
-            .dag
-            .vertices_at_round(Round(r))
-            .expect("dag query");
+        let verts = world.dag.vertices_at_round(Round(r)).expect("dag query");
         assert_eq!(
             verts.len(),
             usize::try_from(quorum).expect("quorum fits usize"),
@@ -44,13 +42,8 @@ fn wave0_meets_shortcut_support_after_one_wave() {
         .set_for(types::primitives::Epoch(0))
         .expect("valset")
         .expect("epoch 0 set");
-    let anchor = select_anchor(
-        WaveId(0),
-        &set,
-        world.beacon.as_ref(),
-        &cfg.leader,
-    )
-    .expect("anchor selection");
+    let anchor = select_anchor(WaveId(0), &set, world.beacon.as_ref(), &cfg.leader)
+        .expect("anchor selection");
     let anchor_hash = world
         .dag
         .vertices_at_round(WaveId(0).first_round())

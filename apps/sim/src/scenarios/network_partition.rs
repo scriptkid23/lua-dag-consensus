@@ -2,12 +2,7 @@
 
 use consensus::Config;
 
-use crate::{
-    adversary::network::NetworkConditions,
-    checker,
-    scenarios::Report,
-    world::World,
-};
+use crate::{adversary::network::NetworkConditions, checker, scenarios::Report, world::World};
 
 /// Run the scenario.
 #[must_use]

@@ -250,3 +250,14 @@ git commit -m "feat(consensus): full Bullshark L2 on sim"
 Plan saved to `docs/superpowers/plans/2026-05-19-03b2-l2-bullshark-full.md`.
 
 Execute **after** 03b-1 is green. Same execution options as 03b-1 plan.
+
+---
+
+## Golden seeds (Task 8)
+
+| Artifact | Seed / fixture | Location |
+|----------|----------------|----------|
+| Anchor author (wave 0) | Beacon `[7u8; 32]`, 4 validators → author index 0 | `bullshark_anchor.rs` |
+| Sim happy path | `"0x01"`, 4 validators, 16 rounds | `apps/sim/tests/basic_4node.rs` |
+
+See `crates/consensus/tests/README.md` for regeneration steps.

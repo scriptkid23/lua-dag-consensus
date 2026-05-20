@@ -1,4 +1,4 @@
-//! Anchor DoS: withhold the ECVRF anchor vertex each wave.
+//! Anchor `DoS`: withhold the ECVRF anchor vertex each wave.
 
 use consensus::Config;
 

@@ -22,9 +22,7 @@ use types::{
 };
 
 use super::{anchor::select_anchor, wave::WaveId};
-use crate::{
-    config::Config, error::Result, host_context::HostContext, ports::DagView,
-};
+use crate::{config::Config, error::Result, host_context::HostContext, ports::DagView};
 
 /// Which commit path resolved the wave.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,11 +129,7 @@ fn count_supporters(
 }
 
 /// Does `start` transitively reference `target` through any parent chain?
-fn vertex_reaches(
-    start: &CertifiedVertex,
-    target: &Hash32,
-    dag: &dyn DagView,
-) -> Result<bool> {
+fn vertex_reaches(start: &CertifiedVertex, target: &Hash32, dag: &dyn DagView) -> Result<bool> {
     if &start.vertex.hash == target {
         return Ok(true);
     }

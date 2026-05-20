@@ -70,10 +70,9 @@ pub fn build_quorum_vertices_for_round(
     let quorum = quorum_vertex_count(validator_count);
     (0..quorum)
         .map(|i| {
-            let proposer = u32::try_from(
-                (virtual_round + u64::from(i)) % u64::from(validator_count),
-            )
-            .expect("proposer index fits u32");
+            let proposer =
+                u32::try_from((virtual_round + u64::from(i)) % u64::from(validator_count))
+                    .expect("proposer index fits u32");
             build_certified_vertex(virtual_round, proposer, parent_hash)
         })
         .collect()

@@ -1,10 +1,10 @@
 //! Smoke test: `StateMachine::step` accepts every `Event` variant.
 
 use consensus::{
-    host_context::HostContext,
-    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
     Config, StateMachine,
     event::{BlsPartial, Event, SubnetAggregate, SubnetId, TimerId},
+    host_context::HostContext,
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
 };
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32, VrfProof},
@@ -38,11 +38,7 @@ impl ValidatorSetPort for EmptyValset {
     fn set_for(&self, _epoch: Epoch) -> consensus::Result<Option<ValidatorSet>> {
         Ok(None)
     }
-    fn index_of(
-        &self,
-        _epoch: Epoch,
-        _validator: &ValidatorId,
-    ) -> consensus::Result<Option<u32>> {
+    fn index_of(&self, _epoch: Epoch, _validator: &ValidatorId) -> consensus::Result<Option<u32>> {
         Ok(None)
     }
 }
@@ -55,10 +51,7 @@ impl Persistence for NoopPersistence {
     fn micro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<MicroQc>> {
         Ok(None)
     }
-    fn store_macro_checkpoint(
-        &self,
-        _cp: &MacroCheckpoint,
-    ) -> consensus::Result<()> {
+    fn store_macro_checkpoint(&self, _cp: &MacroCheckpoint) -> consensus::Result<()> {
         Ok(())
     }
     fn store_macro_qc(&self, _qc: &MacroQc) -> consensus::Result<()> {
@@ -67,10 +60,7 @@ impl Persistence for NoopPersistence {
     fn append_slash_evidence(&self, _ev: &SlashEvidence) -> consensus::Result<()> {
         Ok(())
     }
-    fn macro_checkpoint_at(
-        &self,
-        _height: Height,
-    ) -> consensus::Result<Option<MacroCheckpoint>> {
+    fn macro_checkpoint_at(&self, _height: Height) -> consensus::Result<Option<MacroCheckpoint>> {
         Ok(None)
     }
     fn macro_qc_for(&self, _h: &Hash32) -> consensus::Result<Option<MacroQc>> {

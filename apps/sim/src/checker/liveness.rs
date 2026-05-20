@@ -1,6 +1,6 @@
 //! After the scenario, at least one validator stored a `MicroQc`.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::world::World;
 

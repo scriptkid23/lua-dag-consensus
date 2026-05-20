@@ -1,4 +1,4 @@
-//! L2 stress scenarios: anchor DoS and network partition.
+//! L2 stress scenarios: anchor `DoS` and network partition.
 
 use sim::args::{Args, Scenario};
 

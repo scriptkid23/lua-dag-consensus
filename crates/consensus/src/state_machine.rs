@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     action::Action,
-    bullshark::{micro_qc::EmittedSet, WaveBook},
+    bullshark::{WaveBook, micro_qc::EmittedSet},
     config::Config,
     error::Result,
     event::Event,
@@ -95,9 +95,7 @@ mod tests {
     fn step_returns_empty_for_unknown_timer() {
         let mut sm = StateMachine::new(Config::default_table_17_1());
         let ctx = test_host_context();
-        let actions = sm
-            .step(Event::TimerFired(TimerId(0)), &ctx)
-            .unwrap();
+        let actions = sm.step(Event::TimerFired(TimerId(0)), &ctx).unwrap();
         assert!(actions.is_empty());
     }
 
@@ -163,10 +161,7 @@ mod tests {
             Ok(None)
         }
 
-        fn store_macro_checkpoint(
-            &self,
-            _cp: &types::macros::MacroCheckpoint,
-        ) -> Result<()> {
+        fn store_macro_checkpoint(&self, _cp: &types::macros::MacroCheckpoint) -> Result<()> {
             Ok(())
         }
 
@@ -174,10 +169,7 @@ mod tests {
             Ok(())
         }
 
-        fn append_slash_evidence(
-            &self,
-            _ev: &types::slashing::SlashEvidence,
-        ) -> Result<()> {
+        fn append_slash_evidence(&self, _ev: &types::slashing::SlashEvidence) -> Result<()> {
             Ok(())
         }
 

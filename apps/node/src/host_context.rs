@@ -1,9 +1,9 @@
 //! Stub [`consensus::HostContext`] for 03b-1 (production wiring in plan 06b).
 
 use consensus::{
+    Result,
     host_context::HostContext,
     ports::{DagView, RandomnessBeacon, ValidatorSetPort},
-    Result,
 };
 use storage::RocksPersistence;
 use types::{

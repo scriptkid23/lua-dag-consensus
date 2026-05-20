@@ -18,10 +18,10 @@ pub mod linearize;
 pub mod micro_qc;
 pub mod wave;
 
-pub use anchor::{select_anchor, AnchorChoice};
-pub use commit::{try_commit_wave, CommitDecision, CommitPath};
+pub use anchor::{AnchorChoice, select_anchor};
+pub use commit::{CommitDecision, CommitPath, try_commit_wave};
 pub use linearize::{
-    checkpoint_hash_from_linearization, checkpoint_hash_from_rounds, Linearization,
+    Linearization, checkpoint_hash_from_linearization, checkpoint_hash_from_rounds,
 };
 pub use micro_qc::{EmittedSet, MicroQcBuilder};
 pub use wave::WaveId;
@@ -32,13 +32,8 @@ use smallvec::SmallVec;
 use types::{dag::CertifiedVertex, micro::MicroQc, primitives::Epoch, validator::ValidatorSet};
 
 use crate::{
-    action::Action,
-    config::Config,
-    error::Result,
-    event::TimerId,
-    host_context::HostContext,
-    leader::timeout::TimerScheduler,
-    state_machine::Actions,
+    action::Action, config::Config, error::Result, event::TimerId, host_context::HostContext,
+    leader::timeout::TimerScheduler, state_machine::Actions,
 };
 
 /// Per-validator Bullshark wave bookkeeping (in-memory only).
@@ -77,7 +72,10 @@ pub fn on_certified_vertex(
         if waves.committed_waves.contains(&w) {
             continue;
         }
-        merge_actions(&mut actions, try_emit_for_wave(wave, cfg, waves, emitted, ctx, false)?);
+        merge_actions(
+            &mut actions,
+            try_emit_for_wave(wave, cfg, waves, emitted, ctx, false)?,
+        );
     }
     Ok(actions)
 }
@@ -115,7 +113,12 @@ fn slow_path_delay_nanos(cfg: &Config) -> u128 {
         * 1_000_000
 }
 
-fn anchor_present(wave: WaveId, cfg: &Config, set: &ValidatorSet, ctx: &HostContext<'_>) -> Result<bool> {
+fn anchor_present(
+    wave: WaveId,
+    cfg: &Config,
+    set: &ValidatorSet,
+    ctx: &HostContext<'_>,
+) -> Result<bool> {
     let choice = select_anchor(wave, set, ctx.beacon, &cfg.leader)?;
     Ok(ctx
         .dag

@@ -1,9 +1,9 @@
 //! Anchor selection is deterministic for a fixed beacon + validator set.
 
 use consensus::{
+    Config,
     bullshark::{select_anchor, wave::WaveId},
     ports::RandomnessBeacon,
-    Config,
 };
 use types::{
     crypto_types::{BlsPubkey, Hash32},

@@ -11,11 +11,7 @@
 //! step once vertices carry the proof envelope.
 
 use crypto::hash::{blake3_with_dst, dst};
-use types::{
-    crypto_types::Hash32,
-    primitives::ValidatorId,
-    validator::ValidatorSet,
-};
+use types::{crypto_types::Hash32, primitives::ValidatorId, validator::ValidatorSet};
 
 use super::wave::WaveId;
 use crate::{
@@ -62,12 +58,15 @@ pub fn select_anchor(
         best = Some(match best {
             None => (entry.id, score),
             Some((prev_id, prev_score)) => {
-                if score < prev_score
-                    || (score == prev_score && entry.id.as_bytes() < prev_id.as_bytes())
+                match score
+                    .partial_cmp(&prev_score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
                 {
-                    (entry.id, score)
-                } else {
-                    (prev_id, prev_score)
+                    std::cmp::Ordering::Less => (entry.id, score),
+                    std::cmp::Ordering::Equal if entry.id.as_bytes() < prev_id.as_bytes() => {
+                        (entry.id, score)
+                    }
+                    _ => (prev_id, prev_score),
                 }
             }
         });

@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use consensus::{
+    Config, HostContext, StateMachine,
     action::Action,
-    bullshark::{select_anchor, WaveId},
+    bullshark::{WaveId, select_anchor},
     ports::{Clock, DagView, Persistence, ValidatorSetPort},
     state_machine::Actions,
-    Config, HostContext, StateMachine,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -18,14 +18,9 @@ use types::{
 };
 
 use crate::{
-    adversary::network::NetworkConditions,
-    vertex_factory::build_quorum_vertices_for_round,
-    virtual_beacon::VirtualBeacon,
-    virtual_clock::VirtualClock,
-    virtual_dag::VirtualDag,
-    virtual_net::VirtualNet,
-    virtual_persistence::VirtualPersistence,
-    virtual_timer::VirtualTimer,
+    adversary::network::NetworkConditions, vertex_factory::build_quorum_vertices_for_round,
+    virtual_beacon::VirtualBeacon, virtual_clock::VirtualClock, virtual_dag::VirtualDag,
+    virtual_net::VirtualNet, virtual_persistence::VirtualPersistence, virtual_timer::VirtualTimer,
     virtual_validator_set::VirtualValidatorSet,
 };
 
@@ -108,7 +103,7 @@ impl World {
         }
     }
 
-    /// Withhold the ECVRF anchor vertex each wave (simulates anchor DoS).
+    /// Withhold the ECVRF anchor vertex each wave (simulates anchor `DoS`).
     pub fn enable_anchor_withhold(&mut self) {
         self.anchor_withhold = true;
     }
@@ -148,14 +143,13 @@ impl World {
                     );
                 }
                 Action::ScheduleTimer { id, delay_nanos } => {
-                    self.timer
-                        .schedule(
-                            now.saturating_add(
-                                u64::try_from(delay_nanos.min(u128::from(u64::MAX)))
-                                    .expect("delay fits u64"),
-                            ),
-                            id,
-                        );
+                    self.timer.schedule(
+                        now.saturating_add(
+                            u64::try_from(delay_nanos.min(u128::from(u64::MAX)))
+                                .expect("delay fits u64"),
+                        ),
+                        id,
+                    );
                 }
                 Action::CancelTimer(id) => self.timer.cancel(id),
                 Action::PersistMacroQc(qc) => {
@@ -197,13 +191,7 @@ impl World {
 
     fn anchor_hash_for_wave(&self, wave: WaveId) -> Option<Hash32> {
         let set = self.valset.set_for(Epoch(0)).ok()??;
-        let choice = select_anchor(
-            wave,
-            &set,
-            self.beacon.as_ref(),
-            &self.config.leader,
-        )
-        .ok()?;
+        let choice = select_anchor(wave, &set, self.beacon.as_ref(), &self.config.leader).ok()?;
         let anchor_round = wave.first_round();
         self.dag
             .vertices_at_round(anchor_round)
@@ -245,14 +233,9 @@ impl World {
                     .ok()
                     .flatten()
                     .expect("validator set for anchor withhold");
-                select_anchor(
-                    wave,
-                    &set,
-                    self.beacon.as_ref(),
-                    &self.config.leader,
-                )
-                .ok()
-                .map(|choice| choice.author)
+                select_anchor(wave, &set, self.beacon.as_ref(), &self.config.leader)
+                    .ok()
+                    .map(|choice| choice.author)
             } else {
                 None
             }
