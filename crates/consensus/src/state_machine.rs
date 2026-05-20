@@ -3,7 +3,11 @@
 use smallvec::SmallVec;
 
 use crate::{
-    action::Action, bullshark::micro_qc::EmittedSet, config::Config, error::Result, event::Event,
+    action::Action,
+    bullshark::{micro_qc::EmittedSet, WaveBook},
+    config::Config,
+    error::Result,
+    event::Event,
     host_context::HostContext,
 };
 
@@ -22,6 +26,8 @@ pub struct StateMachine {
     /// Checkpoint hashes for which this validator already broadcast a MicroQc.
     /// Kept after the `l2_minimal` deletion to keep `MicroQcAssembled` idempotent.
     emitted: EmittedSet,
+    /// Committed waves and slow-path timers.
+    waves: WaveBook,
 }
 
 impl StateMachine {
@@ -31,6 +37,7 @@ impl StateMachine {
         Self {
             cfg,
             emitted: EmittedSet::new(),
+            waves: WaveBook::new(),
         }
     }
 
@@ -44,15 +51,23 @@ impl StateMachine {
     /// resulting [`Action`]s.
     pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
         match event {
-            Event::CertifiedVertexReceived(cv) => {
-                crate::bullshark::on_certified_vertex(&mut self.emitted, &self.cfg, cv, ctx)
-            }
+            Event::CertifiedVertexReceived(cv) => crate::bullshark::on_certified_vertex(
+                &mut self.emitted,
+                &mut self.waves,
+                &self.cfg,
+                cv,
+                ctx,
+            ),
             Event::MicroQcAssembled(qc) => {
-                crate::bullshark::on_micro_qc_assembled(&mut self.emitted, qc)
+                crate::bullshark::on_micro_qc_assembled(&self.emitted, qc)
             }
-            Event::TimerFired(id) => {
-                crate::bullshark::on_timer_fired(&mut self.emitted, &self.cfg, id, ctx)
-            }
+            Event::TimerFired(id) => crate::bullshark::on_timer_fired(
+                &mut self.emitted,
+                &mut self.waves,
+                &self.cfg,
+                id,
+                ctx,
+            ),
             Event::MacroProposalReceived(_) => {
                 // TODO(plan 03c): macro proposer dispatch.
                 Ok(Actions::new())
@@ -77,7 +92,7 @@ mod tests {
     use crate::event::TimerId;
 
     #[test]
-    fn step_returns_empty_for_timer_in_skeleton() {
+    fn step_returns_empty_for_unknown_timer() {
         let mut sm = StateMachine::new(Config::default_table_17_1());
         let ctx = test_host_context();
         let actions = sm

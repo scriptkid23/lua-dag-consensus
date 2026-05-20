@@ -1,18 +1,17 @@
-//! Integration: full Bullshark wave 0 commit emits `BroadcastMicroQc`.
-//!
-//! Ignored until plan `2026-05-19-03b2-l2-bullshark-full.md` Task 5 rewires
-//! the full Bullshark rules; the body still reflects the 03b-1 relaxed
-//! commit and will be rewritten in that task.
+//! Integration: Bullshark wave commit emits `BroadcastMicroQc`.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, RwLock};
 
 use consensus::{
-    action::Action, ports::Persistence, Config, HostContext, StateMachine,
+    action::Action,
+    bullshark::{select_anchor, wave::WaveId},
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
+    Config, HostContext, StateMachine,
 };
-use consensus::ports::{Clock, DagView, RandomnessBeacon, ValidatorSetPort};
+use crypto::hash::{blake3_with_dst, dst};
 use types::{
-    crypto_types::{BlsAggSig, BlsSig, Hash32},
+    crypto_types::{BlsAggSig, BlsPubkey, BlsSig, Hash32},
     dag::{CertifiedVertex, Vertex},
     micro::MicroQc,
     primitives::{Epoch, Round, StakeWeight, ValidatorId},
@@ -146,18 +145,21 @@ fn validator_id(i: u32) -> ValidatorId {
     ValidatorId(id)
 }
 
-fn build_vertex(round: u64, proposer: u32) -> CertifiedVertex {
-    let author = validator_id(proposer);
-    let mut bytes = [0u8; 32];
-    bytes[..8].copy_from_slice(&round.to_be_bytes());
-    let hash = Hash32(bytes);
+fn vertex_hash(round: u64, proposer: u32) -> Hash32 {
+    let mut buf = Vec::with_capacity(40);
+    buf.extend_from_slice(&round.to_be_bytes());
+    buf.extend_from_slice(&proposer.to_be_bytes());
+    blake3_with_dst(dst::CONTENT_HASH, &buf)
+}
+
+fn build_vertex(round: u64, proposer: u32, parents: Vec<Hash32>) -> CertifiedVertex {
     CertifiedVertex {
         vertex: Vertex {
             round: Round(round),
-            author,
-            parents: vec![],
+            author: validator_id(proposer),
+            parents,
             blobs: vec![],
-            hash,
+            hash: vertex_hash(round, proposer),
         },
         certificate: BlsAggSig {
             sig: BlsSig([0xAB; 96]),
@@ -166,21 +168,12 @@ fn build_vertex(round: u64, proposer: u32) -> CertifiedVertex {
     }
 }
 
-fn setup_dag_with_full_wave0(n: u32) -> HashMapDag {
-    let dag = HashMapDag::new();
-    for r in 0..=3u64 {
-        let v = build_vertex(r, u32::try_from(r % u64::from(n)).expect("proposer index"));
-        dag.insert(v);
-    }
-    dag
-}
-
 fn validator_set(n: u32) -> TestValset {
     let mut entries = Vec::new();
     for i in 0..n {
         entries.push(ValidatorEntry {
             id: validator_id(i),
-            bls_pubkey: types::crypto_types::BlsPubkey([0; 48]),
+            bls_pubkey: BlsPubkey([0; 48]),
             stake: StakeWeight(1_000),
             identity: ValidatorIdentity {
                 asn: None,
@@ -196,15 +189,55 @@ fn validator_set(n: u32) -> TestValset {
     })
 }
 
+/// Wave 1 (rounds 4–7): causal history in 0–3, anchor at 4, full supporter
+/// window at 5–6 so shortcut commit and BFS closure both reach `2f+1` authors.
+fn setup_dag_for_wave1_commit(n: u32, beacon: &FixedBeacon, cfg: &Config) -> HashMapDag {
+    let set = validator_set(n).0;
+    let anchor_choice = select_anchor(
+        WaveId(1),
+        &set,
+        beacon as &dyn RandomnessBeacon,
+        &cfg.leader,
+    )
+    .unwrap();
+    let anchor_proposer = (0..n)
+        .find(|i| validator_id(*i) == anchor_choice.author)
+        .expect("anchor author in set");
+
+    let dag = HashMapDag::new();
+    let mut prev_hash = None::<Hash32>;
+    for r in 0..4 {
+        let v = build_vertex(
+            r,
+            u32::try_from(r % u64::from(n)).expect("proposer"),
+            prev_hash.into_iter().collect(),
+        );
+        prev_hash = Some(v.vertex.hash);
+        dag.insert(v);
+    }
+
+    let anchor = build_vertex(4, anchor_proposer, prev_hash.into_iter().collect());
+    let anchor_hash = anchor.vertex.hash;
+    dag.insert(anchor);
+
+    let window = u64::from(cfg.bullshark.shortcut_round_count);
+    for r in 5..=4 + window {
+        for p in 0..n {
+            dag.insert(build_vertex(r, p, vec![anchor_hash]));
+        }
+    }
+    dag
+}
+
 static TEST_CLOCK: TestClock = TestClock;
-static TEST_BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
+static TEST_BEACON: FixedBeacon = FixedBeacon(Hash32([7u8; 32]));
 static TEST_PERSIST: NoopPersistence = NoopPersistence;
 
 #[test]
-#[ignore = "re-enabled after 03b-2 Task 5"]
 fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
     let n = 4;
-    let dag = setup_dag_with_full_wave0(n);
+    let cfg = Config::default_table_17_1();
+    let dag = setup_dag_for_wave1_commit(n, &TEST_BEACON, &cfg);
     let valset = validator_set(n);
     let ctx = HostContext {
         dag: &dag,
@@ -213,10 +246,12 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
     };
-    let mut sm = StateMachine::new(Config::default_table_17_1());
-    let v = DagView::vertices_at_round(&dag, Round(3))
+    let mut sm = StateMachine::new(cfg.clone());
+    let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
+    let v = DagView::vertices_at_round(&dag, trigger_round)
         .unwrap()
-        .pop()
+        .into_iter()
+        .next()
         .unwrap();
     let actions = sm
         .step(consensus::event::Event::CertifiedVertexReceived(v), &ctx)
@@ -230,10 +265,10 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
 }
 
 #[test]
-#[ignore = "re-enabled after 03b-2 Task 5"]
 fn micro_qc_assembled_twice_is_idempotent() {
     let n = 4;
-    let dag = setup_dag_with_full_wave0(n);
+    let cfg = Config::default_table_17_1();
+    let dag = setup_dag_for_wave1_commit(n, &TEST_BEACON, &cfg);
     let valset = validator_set(n);
     let ctx = HostContext {
         dag: &dag,
@@ -242,10 +277,12 @@ fn micro_qc_assembled_twice_is_idempotent() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
     };
-    let mut sm = StateMachine::new(Config::default_table_17_1());
-    let v = DagView::vertices_at_round(&dag, Round(3))
+    let mut sm = StateMachine::new(cfg.clone());
+    let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
+    let v = DagView::vertices_at_round(&dag, trigger_round)
         .unwrap()
-        .pop()
+        .into_iter()
+        .next()
         .unwrap();
     let first = sm
         .step(
