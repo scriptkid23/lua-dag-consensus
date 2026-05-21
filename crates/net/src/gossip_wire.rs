@@ -71,23 +71,23 @@ pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
         Topic::MicroQc => {
             let m: MicroQc = decode_event_payload(data)?;
             // No dedicated `MicroQcReceived` exists today; surface as Assembled.
-            return Ok(Some(Event::MicroQcAssembled(m)));
+            Ok(Some(Event::MicroQcAssembled(m)))
         }
         Topic::MacroProposal => {
             let m: MacroProposal = decode_event_payload(data)?;
-            return Ok(Some(Event::MacroProposalReceived(m)));
+            Ok(Some(Event::MacroProposalReceived(m)))
         }
         Topic::SubnetAggregate => {
             let a: SubnetAggregate = decode_event_payload(data)?;
-            return Ok(Some(Event::SubnetAggregateReceived(a)));
+            Ok(Some(Event::SubnetAggregateReceived(a)))
         }
         Topic::MacroQc => {
             let q: MacroQc = decode_event_payload(data)?;
-            return Ok(Some(Event::MacroQcReceived(q)));
+            Ok(Some(Event::MacroQcReceived(q)))
         }
         Topic::SlashEvidence => {
             let s: SlashEvidence = decode_event_payload(data)?;
-            return Ok(Some(Event::SlashEvidenceFound(s)));
+            Ok(Some(Event::SlashEvidenceFound(s)))
         }
         Topic::BlsPartial(subnet) => {
             let p: BlsPartial = decode_event_payload(data)?;
@@ -97,13 +97,11 @@ pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
                     subnet.0, p.subnet.0
                 )));
             }
-            return Ok(Some(Event::BlsPartialReceived(p)));
+            Ok(Some(Event::BlsPartialReceived(p)))
         }
-        Topic::CertifiedVertex => {
-            // Mode-A devnet does not produce CertifiedVertex broadcasts; subscribers
-            // ignore until L1 ingestion lands.
-            return Ok(None);
-        }
+        // Mode-A devnet does not produce CertifiedVertex broadcasts; subscribers
+        // ignore until L1 ingestion lands.
+        Topic::CertifiedVertex => Ok(None),
     }
 }
 
