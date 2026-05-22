@@ -765,6 +765,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "sha2",
  "thiserror 2.0.18",
+ "toml",
  "types",
 ]
 

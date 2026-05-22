@@ -7,12 +7,15 @@
 
 #![cfg_attr(not(test), warn(missing_docs))]
 
+pub mod action_applier;
 pub mod args;
 pub mod config;
 pub mod config_layers;
+pub mod devnet_keys;
 pub mod host_context;
 pub mod observability;
 pub mod orchestrator;
+pub mod query;
 pub mod rpc_server;
 pub mod runtime;
 pub mod signer;

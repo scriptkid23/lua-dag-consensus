@@ -9,7 +9,6 @@ use anyhow::Result;
 use types::validator::ValidatorSet;
 
 /// Read a validator set from a TOML file.
-#[allow(dead_code)]
 pub fn load_from_toml(path: &Path) -> Result<ValidatorSet> {
     let raw = std::fs::read_to_string(path)?;
     let set: ValidatorSet = toml::from_str(&raw)?;

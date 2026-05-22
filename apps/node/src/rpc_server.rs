@@ -1,16 +1,20 @@
-//! JSON-RPC server placeholder. Real method registration arrives with
-//! `consensus::api::ConsensusQuery` wiring.
+//! JSON-RPC server with L3 read-only query methods (plan 06b-l3).
 
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{Json, Router, routing::post};
+use borsh::to_vec;
+use consensus::api::query::ConsensusQuery;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
+use types::macros::MacroCheckpoint;
+use types::primitives::Height;
+
+use crate::query::RocksConsensusQuery;
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct RpcReq {
     /// JSON-RPC version (must be `"2.0"`).
     pub jsonrpc: String,
@@ -30,27 +34,78 @@ pub struct RpcResp {
     pub jsonrpc: &'static str,
     /// Echoed request id.
     pub id: serde_json::Value,
-    /// Result (skeleton always returns `null`).
+    /// Result payload.
     pub result: serde_json::Value,
 }
 
-async fn rpc(Json(req): Json<RpcReq>) -> Json<RpcResp> {
+async fn rpc(
+    axum::extract::State(query): axum::extract::State<Arc<RocksConsensusQuery>>,
+    Json(req): Json<RpcReq>,
+) -> Json<RpcResp> {
     info!(target: "node::rpc", method = %req.method, "rpc method invoked");
-    // Skeleton: every method returns null.
+    let result = match req.method.as_str() {
+        "lua_getLatestFinalized" => latest_finalized(&query),
+        "lua_getMacroCheckpointAt" => macro_checkpoint_at(&query, &req.params),
+        _ => serde_json::Value::Null,
+    };
     Json(RpcResp {
         jsonrpc: "2.0",
         id: req.id,
-        result: serde_json::Value::Null,
+        result,
     })
+}
+
+fn latest_finalized(query: &RocksConsensusQuery) -> serde_json::Value {
+    match query.latest_finalized() {
+        Ok(Some(qc)) => {
+            let mode = format!("{:?}", qc.mode);
+            serde_json::json!({
+                "checkpoint_hash": hex::encode(qc.checkpoint_hash.0),
+                "mode": mode,
+            })
+        }
+        Ok(None) => serde_json::Value::Null,
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "latest_finalized query failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn macro_checkpoint_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let Some(height_raw) = params.get(0).and_then(|v| v.as_u64()) else {
+        return serde_json::Value::Null;
+    };
+    let height = Height(height_raw);
+    match query.macro_checkpoint_at(height) {
+        Ok(Some(cp)) => match to_vec(&cp) {
+            Ok(bytes) => serde_json::json!({
+                "height": height_raw,
+                "checkpoint_borsh_hex": hex::encode(bytes),
+            }),
+            Err(e) => {
+                warn!(target: "node::rpc", error = %e, "macro checkpoint encode failed");
+                serde_json::Value::Null
+            }
+        },
+        Ok(None) => serde_json::Value::Null,
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "macro_checkpoint_at query failed");
+            serde_json::Value::Null
+        }
+    }
 }
 
 /// Start the JSON-RPC HTTP server.
 pub async fn serve(
     addr: &str,
+    query: Arc<RocksConsensusQuery>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let socket: SocketAddr = SocketAddr::from_str(addr)?;
-    let app = Router::new().route("/", post(rpc));
+    let app = Router::new()
+        .route("/", post(rpc))
+        .with_state(query);
     let listener = TcpListener::bind(socket).await?;
     info!(target: "node::rpc", "rpc listening on {addr}");
     tokio::spawn(async move {

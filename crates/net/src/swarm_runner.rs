@@ -86,7 +86,7 @@ pub async fn spawn_gossip_tasks(
         gossipsub::Behaviour::new(MessageAuthenticity::Signed(keypair.clone()), gossip_cfg)
             .map_err(|e| anyhow::anyhow!("gossipsub behaviour: {e}"))?;
 
-    for topic in subscribe_set() {
+    for topic in subscribe_set(net_cfg.macro_subnet_count) {
         gossipsub
             .subscribe(&topic.ident())
             .with_context(|| format!("subscribe {topic:?}"))?;
@@ -321,16 +321,25 @@ pub async fn spawn_gossip_tasks(
     })
 }
 
-fn subscribe_set() -> [Topic; 7] {
-    [
+fn subscribe_set(macro_subnet_count: u32) -> Vec<Topic> {
+    let mut topics = vec![
         Topic::CertifiedVertex,
         Topic::MicroQc,
         Topic::MacroProposal,
         Topic::SubnetAggregate,
         Topic::MacroQc,
         Topic::SlashEvidence,
-        Topic::BlsPartial(SubnetId(0)),
-    ]
+    ];
+    // Flat mode uses subnet 0; Mode A subscribes 0..K_e.
+    let partial_count = if macro_subnet_count == 0 {
+        1
+    } else {
+        macro_subnet_count
+    };
+    for i in 0..partial_count {
+        topics.push(Topic::BlsPartial(SubnetId(i)));
+    }
+    topics
 }
 
 fn strip_p2p(addr: &Multiaddr) -> Multiaddr {

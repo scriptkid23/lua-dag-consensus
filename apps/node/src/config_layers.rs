@@ -40,10 +40,20 @@ pub struct NodeSection {
     pub network_mode: String,
     /// `[node.identity]` — how this node's key material is sourced.
     pub identity: NodeIdentityToml,
+    /// Path to the bootstrap validator set TOML (relative to repo root or absolute).
+    #[serde(default = "default_validator_set_path")]
+    pub validator_set_path: PathBuf,
+    /// When true, `network_mode=live` no longer requires `--allow-skeleton-network` for L3.
+    #[serde(default)]
+    pub l3_wire_complete: bool,
 }
 
 fn default_network_mode() -> String {
     "live".into()
+}
+
+fn default_validator_set_path() -> PathBuf {
+    PathBuf::from("config/valsets/devnet-4.toml")
 }
 
 /// `[node.identity]` — kind plus a textual label used by deterministic key derivation.

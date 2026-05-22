@@ -15,6 +15,9 @@ pub struct NetConfig {
     pub gossip: GossipConfig,
     /// Peer-manager parameters.
     pub peers: PeerConfig,
+    /// Mode-A BLS partial subnet count (`0` = derive at node startup from valset).
+    #[serde(default)]
+    pub macro_subnet_count: u32,
 }
 
 /// Gossipsub knobs we need to override.
@@ -59,6 +62,7 @@ impl NetConfig {
                 max_peers: 64,
                 ban_duration_secs: 600,
             },
+            macro_subnet_count: 0,
         }
     }
 

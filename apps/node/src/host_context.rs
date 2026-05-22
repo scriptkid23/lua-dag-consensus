@@ -1,21 +1,27 @@
-//! Stub [`consensus::HostContext`] for 03b-1 (production wiring in plan 06b).
+//! Production [`consensus::HostContext`] wiring for L3 (plan 06b-l3).
 
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result as AnyhowResult};
 use consensus::{
     Result,
     host_context::HostContext,
+    leader::beacon::chain_beacon,
     ports::{DagView, RandomnessBeacon, ValidatorSetPort},
 };
 use storage::RocksPersistence;
 use types::{
     crypto_types::Hash32,
     dag::CertifiedVertex,
+    macros::MacroQc,
     primitives::{Epoch, Round, ValidatorId},
     validator::ValidatorSet,
 };
 
-use crate::{signer::DevSigner, timer::TokioClock};
+use crate::{devnet_keys::validator_id_from_label, signer::DevSigner, timer::TokioClock};
 
-/// Empty DAG — no vertices until L1 ingress (plan 06b).
+/// Empty DAG — no vertices until L1 ingress (plan 06b-L1).
 #[derive(Debug, Default)]
 pub struct EmptyDag;
 
@@ -29,13 +35,37 @@ impl DagView for EmptyDag {
     }
 }
 
-/// Fixed beacon bytes until ECVRF wiring (plan 03b-2).
-#[derive(Debug, Clone)]
-pub struct FixedBeacon(pub Hash32);
+/// Beacon chained on each locally persisted macro QC (mirrors sim).
+#[derive(Debug)]
+pub struct ChainedBeacon {
+    current: Mutex<Hash32>,
+}
 
-impl RandomnessBeacon for FixedBeacon {
+impl ChainedBeacon {
+    /// Genesis beacon is zero.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            current: Mutex::new(Hash32::zero()),
+        }
+    }
+
+    /// Advance beacon state after adopting a macro QC.
+    pub fn adopt_macro_qc(&self, qc: &MacroQc) {
+        let mut guard = self.current.lock().expect("beacon lock poisoned");
+        *guard = chain_beacon(&*guard, &qc.checkpoint_hash);
+    }
+}
+
+impl Default for ChainedBeacon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RandomnessBeacon for ChainedBeacon {
     fn current(&self) -> Result<Hash32> {
-        Ok(self.0)
+        Ok(*self.current.lock().expect("beacon lock poisoned"))
     }
 }
 
@@ -84,23 +114,33 @@ pub struct StubHostBundle {
     pub clock: TokioClock,
     /// Genesis / loaded validator set.
     pub valset: CachedValidatorSet,
-    /// Fixed beacon.
-    pub beacon: FixedBeacon,
-    /// Dev-only local signer (plan 03d).
+    /// Macro-QC-chained beacon (shared with `ActionApplier`).
+    pub beacon: Arc<ChainedBeacon>,
+    /// Dev-only local signer (plan 03d / 06b-l3 pubkey match).
     pub signer: DevSigner,
 }
 
 impl StubHostBundle {
-    /// Build stubs for devnet / skeleton startup.
-    #[must_use]
-    pub fn new(valset: ValidatorSet) -> Self {
-        Self {
+    /// Build host ports for devnet startup; signer must match `label` in valset.
+    pub fn new(
+        label: &str,
+        valset: ValidatorSet,
+        signer_key_path: Option<&Path>,
+    ) -> AnyhowResult<Self> {
+        let self_id = validator_id_from_label(label);
+        let entry = valset
+            .entries
+            .iter()
+            .find(|e| e.id == self_id)
+            .with_context(|| format!("self_id {self_id} not found in validator set"))?;
+        let beacon = Arc::new(ChainedBeacon::new());
+        Ok(Self {
             dag: EmptyDag,
             clock: TokioClock::new(),
             valset: CachedValidatorSet::new(valset),
-            beacon: FixedBeacon(Hash32::zero()),
-            signer: DevSigner::load(None).expect("dev signer must load"),
-        }
+            beacon,
+            signer: DevSigner::load_for_label(label, &entry.bls_pubkey, signer_key_path)?,
+        })
     }
 }
 
@@ -114,7 +154,7 @@ pub fn build_host_context<'a>(
         dag: &bundle.dag,
         clock: &bundle.clock,
         valset: &bundle.valset,
-        beacon: &bundle.beacon,
+        beacon: &*bundle.beacon,
         persistence,
         signer: &bundle.signer,
     }

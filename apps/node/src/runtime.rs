@@ -1,5 +1,6 @@
 //! Top-level binary wiring.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -11,12 +12,17 @@ use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 
 use crate::{
+    action_applier::ActionApplier,
     args::Args,
     config::NodeConfig,
+    devnet_keys::validator_id_from_label,
+    host_context::{ChainedBeacon, StubHostBundle},
     observability::{health, metrics::Metrics, tracing as tracing_init},
     orchestrator::Orchestrator,
+    query::RocksConsensusQuery,
     rpc_server, shutdown,
-    timer::TokioClock,
+    timer::{TimerRegistry, TokioClock},
+    validator_set_loader,
 };
 
 /// Synchronous entry point used by `main.rs`.
@@ -35,31 +41,47 @@ pub fn run() -> Result<()> {
     runtime.block_on(async move { run_async(cfg, args).await })
 }
 
-/// Derive a deterministic `ValidatorId` from the node identity label
-/// (devnet-only; production keying lands with plan 06b-l3).
-fn validator_id_from_label(label: &str) -> types::primitives::ValidatorId {
-    use crypto::hash::{blake3_with_dst, dst};
-    let h = blake3_with_dst(dst::DEVNET_PEER_IDENTITY, label.as_bytes());
-    types::primitives::ValidatorId(h.0)
+fn resolve_valset_path(config_dir: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    if path.starts_with("config/") {
+        if let Some(root) = config_dir.parent() {
+            return root.join(path);
+        }
+    }
+    config_dir.join(path)
 }
 
 async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     info!(target: "node", "starting LUA-DAG node");
 
-    // ─── Fail-closed startup guard (spec §8 / plan 03b-1 Task 9) ───────
-    if cfg.node.network_mode == "live" && !args.allow_skeleton_network {
+    // L3 host wiring complete in 06b-l3; L1 ingress still skeleton.
+    if cfg.node.network_mode == "live"
+        && !args.allow_skeleton_network
+        && !cfg.node.l3_wire_complete
+    {
         anyhow::bail!(
-            "network_mode=\"live\" requires --allow-skeleton-network until plan 06b \
-             wires production HostContext and L1 ingress"
+            "network_mode=\"live\" requires --allow-skeleton-network until L3 node \
+             production wiring is complete (set node.l3_wire_complete or pass the flag)"
         );
     }
+
+    let valset_path = resolve_valset_path(&args.config_dir, &cfg.node.validator_set_path);
+    let valset = validator_set_loader::load_from_toml(&valset_path)
+        .with_context(|| format!("load validator set from {}", valset_path.display()))?;
+    let self_id = validator_id_from_label(&cfg.node.identity.label);
+    valset
+        .entries
+        .iter()
+        .find(|e| e.id == self_id)
+        .with_context(|| format!("self_id {self_id} not in validator set"))?;
 
     // Storage.
     let db = Arc::new(Database::open(&cfg.storage)?);
     let persistence = RocksPersistence::new(db);
 
     // Consensus.
-    let self_id = validator_id_from_label(&cfg.node.identity.label);
     let sm: StateMachine = StateMachine::new(cfg.consensus.clone(), self_id);
     let _clock = TokioClock::new();
 
@@ -68,32 +90,59 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     let (events_tx, events_rx) = mpsc::channel(1024);
     let (bridge, _bridge_handle) = Bridge::with_channels(events_tx.clone(), 1024);
 
+    // Timers → SM events.
+    let timer_registry = Arc::new(TimerRegistry::default());
+    let (timer_schedule_tx, mut timer_schedule_rx) = mpsc::channel(256);
+    let events_tx_timer = events_tx.clone();
+    let registry_for_loop = timer_registry.clone();
+    tokio::spawn(async move {
+        while let Some((id, delay)) = timer_schedule_rx.recv().await {
+            crate::timer::schedule_event(
+                &registry_for_loop,
+                events_tx_timer.clone(),
+                id,
+                delay,
+            );
+        }
+    });
+
+    let host_bundle = StubHostBundle::new(&cfg.node.identity.label, valset.clone(), None)
+        .context("build host context bundle")?;
+    let beacon: Arc<ChainedBeacon> = Arc::clone(&host_bundle.beacon);
+    let action_applier = ActionApplier::new(
+        persistence.clone(),
+        timer_schedule_tx,
+        timer_registry,
+        beacon,
+    );
+
     // Observability.
     let metrics = Arc::new(Metrics::new()?);
 
     // Shutdown plumbing.
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    // ─── Live swarm (Task 10) ──────────────────────────────────────────
-    // Skeleton mode is allowed only when `--allow-skeleton-network` is set.
-    // In live mode we always spawn the swarm.
+    // ─── Live swarm ────────────────────────────────────────────────────
     let (net_actions_tx, net_actions_rx) = mpsc::channel::<Action>(1024);
     let (swarm_handle, net_ready_rx) = if args.allow_skeleton_network
         && cfg.node.network_mode != "live"
     {
-        // Skeleton path: provide a stub readiness signal (always true) and no
-        // swarm task.
         let (ready_tx, ready_rx) = watch::channel(true);
         drop(ready_tx);
         (None, ready_rx)
     } else {
+        let mut net_cfg = cfg.net.clone();
+        if net_cfg.macro_subnet_count == 0 {
+            let n_e = u32::try_from(valset.entries.len()).unwrap_or(0);
+            net_cfg.macro_subnet_count =
+                consensus::macro_fin::compute_ke(&cfg.consensus, n_e).0;
+        }
         let keypair = net::deterministic_key::devnet_keypair_from_label(&cfg.node.identity.label)
             .context("derive devnet keypair from node.identity.label")?;
-        let spawn = net::swarm_runner::spawn_gossip_tasks(keypair, cfg.net.clone(), net_actions_rx)
+        let spawn = net::swarm_runner::spawn_gossip_tasks(keypair, net_cfg, net_actions_rx)
             .await
             .context("spawn gossipsub swarm")?;
 
-        // Fan-in swarm events into the consensus events channel.
         let mut events_rx_swarm = spawn.events_rx;
         let events_tx_for_swarm = events_tx.clone();
         let metrics_fanin = metrics.clone();
@@ -116,6 +165,8 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         (Some(spawn.handle), spawn.ready)
     };
 
+    let query = Arc::new(RocksConsensusQuery::new(persistence.clone()));
+
     // HTTP surfaces.
     let admin_shutdown = subscribe_to_shutdown(shutdown_rx.clone());
     let rpc_shutdown = subscribe_to_shutdown(shutdown_rx.clone());
@@ -126,15 +177,9 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         admin_shutdown,
     )
     .await?;
-    rpc_server::serve(&cfg.rpc_listen, rpc_shutdown).await?;
+    rpc_server::serve(&cfg.rpc_listen, query, rpc_shutdown).await?;
 
     // Orchestrator.
-    let valset = types::validator::ValidatorSet {
-        epoch: types::primitives::Epoch(0),
-        entries: vec![],
-        total_stake: types::primitives::StakeWeight(0),
-    };
-    let host_bundle = crate::host_context::StubHostBundle::new(valset);
     let orch = Orchestrator::new(
         sm,
         bridge,
@@ -143,6 +188,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         metrics,
         net_actions_tx,
         host_bundle,
+        action_applier,
     );
     let orch_task = tokio::spawn(orch.run());
 
@@ -220,13 +266,6 @@ pub mod test_helpers {
     /// Drive the runtime up to the live-mode gate, then immediately request
     /// shutdown. Returns whatever startup error fires before the orchestrator
     /// can run, or `Ok(())` if startup is clean.
-    ///
-    /// Used by `tests/start_fails_closed_in_live_mode.rs` (spec §8 negative
-    /// test) so a regression that bypasses the listen-addr gate is caught
-    /// against the real `run_async` body — not a synthetic helper.
-    ///
-    /// `async` is retained for API symmetry with `run_async`; the body
-    /// performs no `.await` because the gate is purely a config check.
     #[allow(clippy::unused_async)]
     pub async fn run_for_test(test_args: TestArgs) -> Result<()> {
         let args = Args {
@@ -242,13 +281,13 @@ pub mod test_helpers {
         };
         let cfg = NodeConfig::load(&args)?;
 
-        // Run the same fail-closed gate as `run_async` and return its error.
-        // (We do not actually start the swarm here: the test only exercises
-        // the gate and does not need a tokio-multithreaded runtime.)
-        if cfg.node.network_mode == "live" && !args.allow_skeleton_network {
+        if cfg.node.network_mode == "live"
+            && !args.allow_skeleton_network
+            && !cfg.node.l3_wire_complete
+        {
             anyhow::bail!(
-                "network_mode=\"live\" requires --allow-skeleton-network until plan 06b \
-                 wires production HostContext and L1 ingress"
+                "network_mode=\"live\" requires --allow-skeleton-network until L3 node \
+                 production wiring is complete (set node.l3_wire_complete or pass the flag)"
             );
         }
         Ok(())
