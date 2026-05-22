@@ -476,4 +476,4 @@ rg "fixture_bls_sig|0xCD; 96" crates/consensus/src/macro_fin --glob '!**/tests/*
 - Existing 03c-2 scenarios stay green after golden refresh.
 - Inactivity leak emission and on-chain penalty application remain **out of scope**.
 
-**Next:** **06b-l3** (node production L3 gossip/RPC + live signer) or **03d+** inactivity leak emission.
+**Next:** [`06b-l3-node-production.md`](./2026-05-22-06b-l3-node-production.md) or [`03d-plus-inactivity-leak.md`](./2026-05-22-03d-plus-inactivity-leak.md).

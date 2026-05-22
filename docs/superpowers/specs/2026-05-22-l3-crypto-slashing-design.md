@@ -83,4 +83,4 @@ Replace **deterministic fixture crypto** on the L3 hot path with **real BLS12-38
 - No `fixture_bls_sig` on L3 hot path in `macro_fin` (grep check in CI note).
 - `verify_evidence` returns `Err` on tampered `SlashEvidence` in unit tests.
 
-**Next:** [06b-l3](2026-05-22-03c2-l3-full.md) node production gossip, or inactivity-leak emission follow-up.
+**Next:** [`06b-l3-node-production.md`](./2026-05-22-06b-l3-node-production.md) (node gossip/persist/RPC) or [`03d-plus-inactivity-leak.md`](./2026-05-22-03d-plus-inactivity-leak.md).
