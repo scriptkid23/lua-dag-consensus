@@ -58,6 +58,8 @@ StateMachine {
 
 `step` chains macro-finality work after bullshark on `CertifiedVertexReceived`, and dispatches the four macro events (`MacroProposalReceived`, `BlsPartialReceived`, `MacroQcReceived`, `SubnetAggregateReceived → empty in 03c-1`) into `macro_fin::on_*` entry points. **No new ports, no `step` signature change.** One signature change does propagate outward: `StateMachine::new(cfg)` becomes `StateMachine::new(cfg, self_id)` because `MacroBook` needs to know which validator it speaks for (proposer self-check + `lock_macro` caller). Three call sites migrate: `apps/sim/src/world.rs`, `apps/node/src/runtime.rs`, `apps/cli/src/commands/replay_log.rs`.
 
+**One new `Action` variant:** `Action::PersistMacroCheckpoint(MacroCheckpoint)`. The `Persistence::store_macro_checkpoint` port already exists; the new variant just lets the SM trigger it next to `PersistMacroQc`. This gives the sim `lock_macro` checker per-height visibility (§5.10), and gives downstream consumers (RPC, light-client header builder) a canonical `MacroCheckpoint` artifact to read back. Adding a variant is wire-breaking, but L3 is not yet on the wire.
+
 **Rejected alternatives:**
 
 - **Bullshark returns structured `WaveOutcome`.** Explicit cross-module handoff at the cost of changing three bullshark entry-point signatures and threading an `Option` through every dispatch arm. Marginal clarity over A.
@@ -222,6 +224,7 @@ pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
          │     last_macro_hash = candidate[height].hash
          │     next_height     = Height(height.0 + 1)
          │     emit BroadcastMacroQc(qc),
+         │          PersistMacroCheckpoint(candidate[height]),
          │          PersistMacroQc(qc),
          │          UpdateBlobStatus(Justified)
          │     if two_chain.newly_finalized_height() == Some(prev_h):
@@ -233,7 +236,8 @@ pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
          ├─ emitted_macro_qc.insert(qc.checkpoint_hash)
          ├─ two_chain.adopt(candidate[height])      // candidate must exist; else log+drop
          ├─ last_macro_hash = candidate[height].hash
-         └─ emit PersistMacroQc(qc), UpdateBlobStatus(Justified)
+         └─ emit PersistMacroCheckpoint(candidate[height]),
+              PersistMacroQc(qc), UpdateBlobStatus(Justified)
               + UpdateBlobStatus(Finalized) if 2-chain advances
 ```
 
@@ -308,7 +312,7 @@ Justification depth = 1 macro window; finality depth = 2. No source/target epoch
 
 **SM side:** the only mutation of `LockMacro` in 03c-1 is the call inside `on_macro_proposal` **before** emitting `BlsPartial`. On `Err`, increment `macros.suppressed_conflicts` and return empty actions for that event.
 
-**Sim side:** `apps/sim/src/checker/lock_macro.rs` replaces the stub with an observational check that, for every macro height, collects the set of `MacroQc.checkpoint_hash` adopted across all validators' `VirtualPersistence` and asserts the set has exactly one element when non-empty. `suppressed_conflicts` is not part of the protocol invariant — checker is purely about adopted artifacts.
+**Sim side:** `apps/sim/src/checker/lock_macro.rs` replaces the stub with an observational check that iterates `Persistence::macro_checkpoint_at(h)` for `h = 0..max_height_seen` across all validators and asserts: for every height, every validator that adopted a `MacroQc` for that height adopted the same `(checkpoint_hash, MacroQc)`. The per-height grouping requires `Action::PersistMacroCheckpoint` to be wired (see §5.11). `suppressed_conflicts` is not part of the protocol invariant — checker is purely about adopted artifacts.
 
 ### 5.11 `sim` driver changes (03c-1)
 
@@ -326,6 +330,8 @@ Action::BroadcastMacroQc(qc) => {
     self.net.enqueue_from_action(validator_idx, &Action::BroadcastMacroQc(qc),
         self.machines.len() as u32, now, &mut self.rng);
 }
+Action::PersistMacroCheckpoint(cp) =>
+    self.persistence[validator_idx as usize].store_macro_checkpoint(&cp)?,
 Action::PersistMacroQc(qc) =>
     self.persistence[validator_idx as usize].store_macro_qc(&qc)?,
 Action::UpdateBlobStatus { blob, status } =>
@@ -356,8 +362,7 @@ The existing catch-all `debug_assert!(false, "unexpected non-L2 action in 03b-1"
 
 - **Unit (`consensus`):** `book::micro_ring` push-and-drain; `proposer::round_robin` distinct primary/backup; `two_chain::newly_finalized_height` (genesis → None, h=1 → None, h=2 → Some(1), parent-mismatch → None); `lock_macro` collision via SM dispatch.
 - **Unit (`consensus`):** `macro_qc::try_finalize_mode0` returns `None` below threshold, `Some` at exactly `2f + 1`, bitmap matches signer set.
-- **Integration (`crates/consensus/tests/macro_fin_basic.rs`):** 4-validator hand-driven scenario — feed enough `CertifiedVertexReceived` to commit `W=8` waves; verify proposer emits exactly one `BroadcastMacroProposal`; feed it to all validators; verify each emits one `BroadcastBlsPartial + UpdateBlobStatus(SoftConfirmed)`; feed partials back to one validator; verify exactly one `BroadcastMacroQc + PersistMacroQc + UpdateBlobStatus(Justified)`; advance one more window; verify `UpdateBlobStatus(Finalized)` for prior height.
-- **Integration:** conflicting proposal injection — two `MacroProposal`s for the same height with different `checkpoint.hash`; verify `lock_macro` rejects the second; verify `BlsPartial` is suppressed; verify `suppressed_conflicts == 1`.
+- **Integration (`crates/consensus/tests/macro_fin_basic.rs`):** focused contract tests for the new public surface — `StateMachine::new(cfg, self_id)` compiles and round-trips; `ProposerSchedule::round_robin` matches the doc formula at heights 0..2n; `LockMacro::try_lock` returns `Err` on a same-height conflicting hash. Full E2E (8 wave commits → MacroProposal → 2f+1 BlsPartials → MacroQc → Justified → next-window → Finalized) is covered by `apps/sim happy_path` (§5.12). Building a 4-validator 8-wave DAG inside `consensus/tests` to repeat the E2E here would add ~200 lines of vertex-construction boilerplate for no extra coverage; the sim scenario already exercises the same code paths with real `bullshark` integration.
 - **Sim scenario:** `happy_path` green with `safety_ok && liveness_ok && lock_macro_ok`; notes contain `"l3_finality_active"`.
 - **Sim determinism:** `replay.rs` golden trace — same seed → same ordered list of `Action` discriminants per validator across two runs. Update goldens for L3.
 - **CLI:** `cargo build -p cli`; `replay_log` accepts the new `StateMachine::new(cfg, ValidatorId::zero())` stub signature.
@@ -410,7 +415,7 @@ Real BLS sign/verify deferred to **03d** (separate spec).
 | Level | 03c-1 | 03c-2 |
 |-------|-------|-------|
 | Unit | book ring, round-robin proposer, 2-chain advance, lock_macro via SM, macro_qc Mode 0 threshold | VRF sortition, Mode A subnet assign + aggregate, Mode B fallback, T_macropropose timer expiry |
-| `consensus` integration | 4-validator wave commit → MacroProposal → BlsPartial → MacroQc → Justified → Finalized; conflicting proposal suppression | wave commit under proposer absence; subnet aggregation across 8 subnets; Mode B activation |
+| `consensus` integration | focused contract tests (`StateMachine::new(cfg, self_id)` round-trip, `ProposerSchedule::round_robin` doc formula, `LockMacro::try_lock` conflict) — full E2E delegated to `apps/sim happy_path` | wave commit under proposer absence; subnet aggregation across 8 subnets; Mode B activation |
 | `sim` scenario | `happy_path` to Finalized | + `mode_b_fallback`, `byzantine_split`, `network_partition` (extended for L3) |
 | `cli` | stub ctx compile + replay | optional port-snapshot replay |
 | Property | optional | proptest where cheap |
@@ -425,7 +430,7 @@ Real BLS sign/verify deferred to **03d** (separate spec).
 | `StateMachine::new` signature break ripples to `node`, `sim`, `cli` | Single-commit migration: §3 enumerates the three call sites. |
 | `micro_root` diverges between proposer and verifier under reordered local commits | 03c-1 honest factory delivers vertices synchronously to all validators in identical order; reorder risk only matters under partition (03c-2 scenario). Spec calls this out. |
 | `MacroBook.partials` unbounded growth under adversary spam | Only `BlsPartial`s for `checkpoint_hash`es registered via `MacroProposalReceived` for a known height are inserted; unknown hashes are dropped. Bound at any time is `n × W`. |
-| `Actions` SmallVec capacity (currently 16) overflows under L3 fanout | Per-step max in 03c-1: `CertifiedVertexReceived` → 2 (BroadcastMicroQc + BroadcastMacroProposal); `MacroProposalReceived` → 2 (BroadcastBlsPartial + UpdateBlobStatus(SoftConfirmed)); `BlsPartialReceived` → 4 (BroadcastMacroQc + PersistMacroQc + UpdateBlobStatus(Justified) + optional UpdateBlobStatus(Finalized)). 16-cap holds comfortably; regression test pins it. |
+| `Actions` SmallVec capacity (currently 16) overflows under L3 fanout | Per-step max in 03c-1: `CertifiedVertexReceived` → 2 (BroadcastMicroQc + BroadcastMacroProposal); `MacroProposalReceived` → 2 (BroadcastBlsPartial + UpdateBlobStatus(SoftConfirmed)); `BlsPartialReceived` → 5 (BroadcastMacroQc + PersistMacroCheckpoint + PersistMacroQc + UpdateBlobStatus(Justified) + optional UpdateBlobStatus(Finalized)). 16-cap holds comfortably; regression test pins it. |
 | `BlobId` projection from `MacroCheckpoint.hash[..16]` is lossy | Documented 03c-1 placeholder; L1 lands real per-blob granularity. |
 | Sim flake from per-recipient jitter on `BroadcastBlsPartial` | Deterministic-by-`(sender_idx, recipient_idx)` ordering rule in `virtual_net` (§5.11); replay test pins it. |
 | `happy_path` rounds bumped to 80 slows CI | Acceptable; sim is in-process and fast. |
