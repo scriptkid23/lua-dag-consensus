@@ -1,11 +1,16 @@
 //! Pure-function verifier for `SlashEvidence`.
 
-use types::slashing::SlashEvidence;
+use types::{slashing::SlashEvidence, validator::ValidatorSet};
 
 use crate::error::Result;
 
-/// Verify a slashing evidence. Skeleton always returns `Ok(())`; plan 03d
-/// implements the per-variant verifier.
-pub fn verify_evidence(_ev: &SlashEvidence) -> Result<()> {
-    Ok(())
+use super::{double_vote, equivocation, surround};
+
+/// Verify a slashing evidence bundle against a validator set snapshot.
+pub fn verify_evidence(ev: &SlashEvidence, set: &ValidatorSet) -> Result<()> {
+    match ev {
+        SlashEvidence::MacroEquivocation(e) => equivocation::verify(e, set),
+        SlashEvidence::Surround(e) => surround::verify(e, set),
+        SlashEvidence::DoubleVote(e) => double_vote::verify(e, set),
+    }
 }

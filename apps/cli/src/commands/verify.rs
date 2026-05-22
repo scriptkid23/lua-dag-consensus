@@ -1,7 +1,7 @@
 //! Verify a Borsh-encoded `SlashEvidence` payload offline.
 
 use anyhow::{Context, Result};
-use types::slashing::SlashEvidence;
+use types::{slashing::SlashEvidence, validator::ValidatorSet};
 
 use crate::args::VerifyArgs;
 
@@ -10,7 +10,9 @@ pub fn run(args: &VerifyArgs) -> Result<()> {
     let bytes = std::fs::read(&args.evidence).context("read evidence file")?;
     let ev: SlashEvidence =
         borsh::from_slice(&bytes).map_err(|e| anyhow::anyhow!("decode SlashEvidence: {e}"))?;
-    consensus::slashing::verify_evidence(&ev).context("consensus verifier")?;
+    let raw = std::fs::read_to_string(&args.valset).context("read valset file")?;
+    let set: ValidatorSet = toml::from_str(&raw).context("parse valset TOML")?;
+    consensus::slashing::verify_evidence(&ev, &set).context("consensus verifier")?;
     println!("evidence-ok kind={}", kind_of(&ev));
     Ok(())
 }

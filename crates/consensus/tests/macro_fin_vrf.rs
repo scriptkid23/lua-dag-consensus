@@ -23,6 +23,7 @@ fn vset(n: u32) -> ValidatorSet {
             ValidatorEntry {
                 id: ValidatorId(id),
                 bls_pubkey: BlsPubkey([0; 48]),
+                vrf_pubkey: types::crypto_types::VrfPubkey::zero(),
                 stake: StakeWeight(1),
                 identity: ValidatorIdentity {
                     asn: None,

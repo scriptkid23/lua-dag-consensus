@@ -64,6 +64,9 @@ pub struct VerifyArgs {
     /// Path to a Borsh-encoded `SlashEvidence` payload.
     #[arg(long)]
     pub evidence: PathBuf,
+    /// Validator set snapshot (TOML) for signature verification.
+    #[arg(long)]
+    pub valset: PathBuf,
 }
 
 /// `replay-log` args.

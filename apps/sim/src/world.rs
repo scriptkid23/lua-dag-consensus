@@ -8,7 +8,7 @@ use consensus::{
     action::Action,
     bullshark::{WaveId, select_anchor},
     leader::beacon::chain_beacon,
-    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, SignerPort, ValidatorSetPort},
     state_machine::Actions,
 };
 use rand::SeedableRng;
@@ -20,7 +20,8 @@ use types::{
 };
 
 use crate::{
-    adversary::network::NetworkConditions, vertex_factory::build_quorum_vertices_for_round,
+    adversary::network::NetworkConditions, keys::ValidatorKeyRing,
+    vertex_factory::build_quorum_vertices_for_round,
     virtual_beacon::VirtualBeacon, virtual_clock::VirtualClock, virtual_dag::VirtualDag,
     virtual_net::VirtualNet, virtual_persistence::VirtualPersistence, virtual_timer::VirtualTimer,
     virtual_validator_set::VirtualValidatorSet,
@@ -57,6 +58,8 @@ pub struct World {
     macro_qc_beacon_chained: HashSet<Hash32>,
     /// Drop `MacroProposal` events from this proposer (Mode B adversary).
     pub suppress_macro_proposer: Option<ValidatorId>,
+    /// Deterministic BLS/VRF keys aligned with validator indices.
+    key_ring: ValidatorKeyRing,
 }
 
 impl World {
@@ -64,8 +67,8 @@ impl World {
     #[must_use]
     pub fn new(n: u32, seed: [u8; 32], config: Config) -> Self {
         use crypto::hash::{blake3_with_dst, dst};
-        use types::crypto_types::BlsPubkey;
 
+        let key_ring = ValidatorKeyRing::from_seed(seed, n);
         let mut machines = Vec::with_capacity(n as usize);
         let mut entries = Vec::with_capacity(n as usize);
         for i in 0..n {
@@ -73,7 +76,8 @@ impl World {
             id[..4].copy_from_slice(&i.to_be_bytes());
             entries.push(ValidatorEntry {
                 id: ValidatorId(id),
-                bls_pubkey: BlsPubkey([0; 48]),
+                bls_pubkey: key_ring.bls_pubkey(i as usize),
+                vrf_pubkey: key_ring.vrf_pubkey(i as usize),
                 stake: StakeWeight(1_000),
                 identity: ValidatorIdentity {
                     asn: None,
@@ -108,6 +112,7 @@ impl World {
             anchor_withhold: false,
             macro_qc_beacon_chained: HashSet::new(),
             suppress_macro_proposer: None,
+            key_ring,
         }
     }
 
@@ -138,6 +143,49 @@ impl World {
     /// Resume cross-partition delivery.
     pub fn heal_partition(&mut self) {
         self.net.heal_partition();
+    }
+
+    /// Deliver an event to one validator (adversary helper).
+    pub fn deliver_proposal(
+        &mut self,
+        recipient: u32,
+        event: consensus::Event,
+        now: u64,
+    ) {
+        self.step_validator(recipient, event, now);
+    }
+
+    /// Build a signed macro proposal for validator index `proposer_idx`.
+    pub fn signed_macro_proposal(
+        &self,
+        proposer_idx: u32,
+        checkpoint: types::macros::MacroCheckpoint,
+        beacon: Hash32,
+    ) -> types::macros::MacroProposal {
+        use consensus::macro_fin::{messages, proposer::vrf_alpha};
+        use crypto::hash::dst;
+        let set = self
+            .valset
+            .set_for(Epoch(0))
+            .ok()
+            .flatten()
+            .expect("validator set");
+        let proposer = set.entries[proposer_idx as usize].id;
+        let alpha = vrf_alpha(&beacon, checkpoint.height, &proposer);
+        let signer = self.key_ring.signer(proposer_idx as usize);
+        let (vrf_proof, _) = signer.vrf_prove(&alpha).expect("vrf prove");
+        let msg = messages::proposer_message(&proposer, &checkpoint);
+        types::macros::MacroProposal {
+            checkpoint,
+            proposer,
+            vrf_proof,
+            proposer_sig: signer.sign_bls(dst::MACRO_PROPOSER_SIG, &msg),
+        }
+    }
+
+    /// Count slash evidence entries across all validators.
+    pub fn slash_evidence_count(&self) -> usize {
+        self.persistence.iter().map(|p| p.slash_count()).sum()
     }
 
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
@@ -243,8 +291,20 @@ impl World {
                         &mut self.rng,
                     );
                 }
-                Action::EmitSlashEvidence { .. } => {
-                    debug_assert!(false, "slashing emission is 03d");
+                Action::EmitSlashEvidence { offender, evidence } => {
+                    self.persistence[validator_idx as usize]
+                        .append_slash_evidence(&evidence)
+                        .expect("virtual persistence never fails");
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::EmitSlashEvidence {
+                            offender,
+                            evidence,
+                        },
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
                 }
             }
         }
@@ -260,12 +320,14 @@ impl World {
             }
         }
         let idx = validator_idx as usize;
+        let signer = self.key_ring.signer(idx);
         let ctx = HostContext {
             dag: self.dag.as_ref(),
             clock: self.clock.as_ref(),
             valset: self.valset.as_ref(),
             beacon: self.beacon.as_ref(),
             persistence: self.persistence[idx].as_ref(),
+            signer: &signer,
         };
         let actions = self.machines[idx]
             .step(event, &ctx)

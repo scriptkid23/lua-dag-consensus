@@ -164,6 +164,7 @@ fn validator_set(n: u32) -> TestValset {
         entries.push(ValidatorEntry {
             id: validator_id(i),
             bls_pubkey: BlsPubkey([0; 48]),
+            vrf_pubkey: types::crypto_types::VrfPubkey::zero(),
             stake: StakeWeight(1_000),
             identity: ValidatorIdentity {
                 asn: None,
@@ -222,6 +223,7 @@ fn setup_dag_for_wave1_commit(n: u32, beacon: &FixedBeacon, cfg: &Config) -> Has
 static TEST_CLOCK: TestClock = TestClock;
 static TEST_BEACON: FixedBeacon = FixedBeacon(Hash32([7u8; 32]));
 static TEST_PERSIST: NoopPersistence = NoopPersistence;
+static TEST_SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
 
 #[test]
 fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
@@ -235,6 +237,7 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
         valset: &valset,
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
+        signer: &TEST_SIGNER,
     };
     let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
@@ -266,6 +269,7 @@ fn micro_qc_assembled_twice_is_idempotent() {
         valset: &valset,
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
+        signer: &TEST_SIGNER,
     };
     let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));

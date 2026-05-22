@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 
 use types::{
-    crypto_types::Hash32,
+    crypto_types::{BlsSig, Hash32},
     primitives::{Epoch, ValidatorId},
 };
 
-/// A single macro vote: `(source, target, checkpoint_hash)`.
+/// A single macro vote: `(source, target, checkpoint_hash, sig)`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VoteRecord {
     /// Casper-FFG source epoch.
@@ -16,6 +16,8 @@ pub struct VoteRecord {
     pub target: Epoch,
     /// Hash of the attested checkpoint.
     pub checkpoint: Hash32,
+    /// BLS signature over [`crate::macro_fin::messages::vote_message`].
+    pub sig: BlsSig,
 }
 
 /// Per-validator vote history.

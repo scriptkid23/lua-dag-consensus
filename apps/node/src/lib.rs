@@ -15,6 +15,7 @@ pub mod observability;
 pub mod orchestrator;
 pub mod rpc_server;
 pub mod runtime;
+pub mod signer;
 pub mod shutdown;
 pub mod timer;
 pub mod validator_set_loader;

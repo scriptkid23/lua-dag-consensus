@@ -1,7 +1,7 @@
 # Design: Milestone B — L3 Macro-Finality on `sim` (phased 03c-1 / 03c-2)
 
 **Date:** 2026-05-22
-**Status:** Draft (awaiting review)
+**Status:** 03c-2 landed; 03d plan ready (see plan table below)
 **Audience:** Contributors implementing macro-finality + sim driver
 **Relations:** Extends [`2026-05-11-folder-architecture-design.md`](2026-05-11-folder-architecture-design.md) and [`2026-05-19-l2-sim-milestone-a-design.md`](2026-05-19-l2-sim-milestone-a-design.md). Does **not** include `T_macropropose` backup proposer, Mode A subnet rotation, Mode B leaderless fallback, real BLS sign/verify, surround/double-vote detection, inactivity leak, or L4 BTC anchor — those are 03c-2 and 03d.
 
@@ -72,13 +72,14 @@ StateMachine {
 | ID | Path | Depends on |
 |----|------|------------|
 | **03c-1** | `docs/superpowers/plans/2026-05-22-03c1-l3-minimal-sim.md` | L2 Milestone A complete |
-| **03c-2** | `docs/superpowers/plans/2026-05-XX-03c2-l3-full.md` *(written after 03c-1 lands)* | 03c-1 complete |
+| **03c-2** | `docs/superpowers/plans/2026-05-22-03c2-l3-full.md` | 03c-1 complete |
+| **03d** | `docs/superpowers/plans/2026-05-22-03d-l3-crypto-slashing.md` | 03c-2 complete |
 
 Out of scope for Milestone B, listed for ordering only:
 
 | ID | Topic |
 |----|-------|
-| **03d** | Surround / double-vote detection, real BLS, inactivity leak |
+| **03d+** | Inactivity leak emission (detection landed in 03d; emission deferred) |
 | **06b-l3** | `node`: timer dispatcher for `T_macropropose`, `PersistMacroQc` → `RocksPersistence` (already wired), RPC visibility of finalized heads |
 
 ---

@@ -8,7 +8,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use crate::{
-    crypto_types::BlsSig,
+    crypto_types::{BlsSig, Hash32},
     macros::checkpoint::MacroCheckpoint,
     primitives::{Epoch, ValidatorId},
 };
@@ -36,12 +36,16 @@ pub struct SurroundVote {
     pub a_target: Epoch,
     /// Outer vote signature.
     pub a_sig: BlsSig,
+    /// Outer vote checkpoint hash.
+    pub a_checkpoint: Hash32,
     /// Inner vote source epoch.
     pub b_source: Epoch,
     /// Inner vote target epoch.
     pub b_target: Epoch,
     /// Inner vote signature.
     pub b_sig: BlsSig,
+    /// Inner vote checkpoint hash.
+    pub b_checkpoint: Hash32,
 }
 
 /// Two distinct votes at the same target epoch.
@@ -51,8 +55,12 @@ pub struct DoubleVote {
     pub validator: ValidatorId,
     /// Common target epoch.
     pub target: Epoch,
+    /// First vote checkpoint hash.
+    pub a_checkpoint: Hash32,
     /// First vote signature.
     pub a_sig: BlsSig,
+    /// Second vote checkpoint hash.
+    pub b_checkpoint: Hash32,
     /// Second vote signature.
     pub b_sig: BlsSig,
 }

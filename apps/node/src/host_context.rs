@@ -13,7 +13,7 @@ use types::{
     validator::ValidatorSet,
 };
 
-use crate::timer::TokioClock;
+use crate::{signer::DevSigner, timer::TokioClock};
 
 /// Empty DAG — no vertices until L1 ingress (plan 06b).
 #[derive(Debug, Default)]
@@ -86,6 +86,8 @@ pub struct StubHostBundle {
     pub valset: CachedValidatorSet,
     /// Fixed beacon.
     pub beacon: FixedBeacon,
+    /// Dev-only local signer (plan 03d).
+    pub signer: DevSigner,
 }
 
 impl StubHostBundle {
@@ -97,6 +99,7 @@ impl StubHostBundle {
             clock: TokioClock::new(),
             valset: CachedValidatorSet::new(valset),
             beacon: FixedBeacon(Hash32::zero()),
+            signer: DevSigner::load(None).expect("dev signer must load"),
         }
     }
 }
@@ -113,5 +116,6 @@ pub fn build_host_context<'a>(
         valset: &bundle.valset,
         beacon: &bundle.beacon,
         persistence,
+        signer: &bundle.signer,
     }
 }

@@ -1,5 +1,6 @@
 //! Slashing detectors + penalty math.
 
+pub mod double_vote;
 pub mod equivocation;
 pub mod evidence;
 pub mod inactivity_leak;

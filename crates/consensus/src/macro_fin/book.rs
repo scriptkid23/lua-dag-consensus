@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use crypto::hash::{blake3_with_dst, dst, fixture_bls_sig};
 use types::{
     crypto_types::{BlsSig, Hash32},
-    macros::MacroCheckpoint,
+    macros::{MacroCheckpoint, MacroProposal},
     primitives::{Height, ValidatorId},
 };
 
@@ -57,6 +57,12 @@ pub struct MacroBook {
     pub(crate) subnet_partials: HashMap<(Hash32, SubnetId), BTreeSet<ValidatorId>>,
     /// Per-validator vote history (surround detection in 03d).
     pub(crate) votes: VoteBook,
+    /// Stored partial BLS sig bytes keyed by `(checkpoint_hash, validator)`.
+    pub(crate) partial_sigs: HashMap<(Hash32, ValidatorId), BlsSig>,
+    /// Conflicting macro proposals seen per `(height, proposer)`.
+    pub(crate) proposals_seen: HashMap<(Height, ValidatorId), Vec<MacroProposal>>,
+    /// Invalid crypto events dropped on receive.
+    pub(crate) rejected_crypto: u64,
 }
 
 impl MacroBook {
@@ -82,6 +88,9 @@ impl MacroBook {
             subnet_aggs: HashMap::new(),
             subnet_partials: HashMap::new(),
             votes: VoteBook::new(),
+            partial_sigs: HashMap::new(),
+            proposals_seen: HashMap::new(),
+            rejected_crypto: 0,
         }
     }
 
@@ -95,6 +104,12 @@ impl MacroBook {
     #[must_use]
     pub fn emitted_macro_qc_count(&self) -> usize {
         self.emitted_macro_qc.len()
+    }
+
+    /// Test helper: rejected invalid crypto events.
+    #[must_use]
+    pub fn rejected_crypto(&self) -> u64 {
+        self.rejected_crypto
     }
 }
 

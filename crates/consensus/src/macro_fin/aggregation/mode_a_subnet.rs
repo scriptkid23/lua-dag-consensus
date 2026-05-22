@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
+use crypto::bls::aggregate::aggregate_sigs;
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
     macros::{AggregationMode, MacroQc},
@@ -27,6 +28,7 @@ impl ModeASubnet {
         signers: &BTreeSet<ValidatorId>,
         set: &ValidatorSet,
         assign: &SubnetAssign,
+        partial_sigs: &HashMap<(Hash32, ValidatorId), BlsSig>,
     ) -> Option<SubnetAggregate> {
         let subnet_validators: Vec<_> = set
             .entries
@@ -43,18 +45,18 @@ impl ModeASubnet {
             return None;
         }
         let mut bitmap = vec![0u8; set.entries.len().div_ceil(8)];
+        let mut sigs = Vec::with_capacity(signers.len());
         for (i, entry) in set.entries.iter().enumerate() {
             if signers.contains(&entry.id) {
                 bitmap[i / 8] |= 1 << (i % 8);
+                sigs.push(*partial_sigs.get(&(target, entry.id))?);
             }
         }
+        let agg = aggregate_sigs(&sigs).ok()?;
         Some(SubnetAggregate {
             subnet,
             checkpoint_hash: target,
-            agg: BlsAggSig {
-                sig: BlsSig([0xDE; 96]),
-                bitmap,
-            },
+            agg: BlsAggSig { sig: agg, bitmap },
         })
     }
 
@@ -75,6 +77,7 @@ pub fn try_finalize_mode_a(
     target: Hash32,
     aggs: &HashMap<SubnetId, SubnetAggregate>,
     set: &ValidatorSet,
+    partial_sigs: &HashMap<(Hash32, ValidatorId), BlsSig>,
 ) -> Option<MacroQc> {
     let n = set.entries.len();
     if n == 0 {
@@ -95,12 +98,17 @@ pub fn try_finalize_mode_a(
     if signer_count < need {
         return None;
     }
+    let mut sigs = Vec::with_capacity(signer_count);
+    for (i, entry) in set.entries.iter().enumerate() {
+        let byte = bitmap.get(i / 8).copied().unwrap_or(0);
+        if byte & (1 << (i % 8)) != 0 {
+            sigs.push(*partial_sigs.get(&(target, entry.id))?);
+        }
+    }
+    let agg = aggregate_sigs(&sigs).ok()?;
     Some(MacroQc {
         checkpoint_hash: target,
         mode: AggregationMode::ModeASubnet,
-        agg: BlsAggSig {
-            sig: BlsSig([0xDE; 96]),
-            bitmap,
-        },
+        agg: BlsAggSig { sig: agg, bitmap },
     })
 }

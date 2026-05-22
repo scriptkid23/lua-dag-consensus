@@ -4,9 +4,11 @@ pub mod aggregation;
 pub mod book;
 pub mod checkpoint;
 pub mod macro_qc;
+pub mod messages;
 pub mod proposer;
 pub mod timer;
 pub mod two_chain;
+pub mod verify;
 pub mod vote_book;
 pub mod window;
 
@@ -36,8 +38,13 @@ use crate::{
     event::{BlsPartial, SubnetAggregate, SubnetId, TimerId},
     host_context::HostContext,
     leader::reputation::Reputation,
+    slashing::{double_vote, surround},
     state_machine::Actions,
 };
+
+use crypto::hash::dst;
+use proposer::vrf_alpha;
+use types::slashing::SlashEvidence;
 
 use aggregation::{mode_a_subnet::ModeASubnet, subnet::SubnetAssign};
 use vote_book::VoteRecord;
@@ -144,7 +151,12 @@ fn try_emit_mode_a_qc(
         return Ok(Actions::new());
     }
     let aggs = book.subnet_aggs.get(&checkpoint_hash).cloned().unwrap_or_default();
-    let Some(qc) = macro_qc::try_finalize_mode_a_from_aggs(checkpoint_hash, &aggs, &set) else {
+    let Some(qc) = macro_qc::try_finalize_mode_a_from_aggs(
+        checkpoint_hash,
+        &aggs,
+        &set,
+        &book.partial_sigs,
+    ) else {
         return Ok(Actions::new());
     };
     if book.emitted_macro_qc.contains(&checkpoint_hash) {
@@ -213,11 +225,15 @@ pub fn on_local_micro_qcs(
         let schedule =
             ProposerSchedule::vrf_sortition(&beacon, &set, candidate_height, &book.reputation);
         if schedule.primary == book.self_id {
+            let alpha = vrf_alpha(&beacon, candidate_height, &book.self_id);
+            let (vrf_proof, _) = ctx.signer.vrf_prove(&alpha)?;
+            let msg = messages::proposer_message(&book.self_id, &candidate);
+            let proposer_sig = ctx.signer.sign_bls(dst::MACRO_PROPOSER_SIG, &msg);
             actions.push(Action::BroadcastMacroProposal(MacroProposal {
                 checkpoint: candidate.clone(),
                 proposer: book.self_id,
-                vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, candidate_height, &book.self_id),
-                proposer_sig: book::fixture_proposer_sig(&book.self_id, &candidate.hash),
+                vrf_proof,
+                proposer_sig,
             }));
             book.proposal_seen.insert(candidate_height);
         } else if schedule.backup == book.self_id {
@@ -249,6 +265,40 @@ pub fn on_macro_proposal(
             .insert(height, ctx.beacon.current()?);
     }
     let beacon = beacon_for_height(book, ctx, height)?;
+    let alpha = vrf_alpha(&beacon, height, &p.proposer);
+    if !verify::verify_proposal(&set, &p, &alpha) {
+        book.rejected_crypto += 1;
+        return Ok(Actions::new());
+    }
+
+    let proposer_key = (height, p.proposer);
+    if let Some(existing) = book.proposals_seen.get(&proposer_key) {
+        if existing
+            .iter()
+            .any(|prev| prev.checkpoint.hash != p.checkpoint.hash)
+        {
+            let first = existing[0].clone();
+            let mut actions = Actions::new();
+            actions.push(Action::EmitSlashEvidence {
+                offender: p.proposer,
+                evidence: SlashEvidence::MacroEquivocation(crate::slashing::equivocation::detect(
+                    p.proposer, first, p,
+                )),
+            });
+            return Ok(actions);
+        }
+        if existing
+            .iter()
+            .any(|prev| prev.checkpoint.hash == p.checkpoint.hash)
+        {
+            return Ok(Actions::new());
+        }
+    }
+    book.proposals_seen
+        .entry(proposer_key)
+        .or_default()
+        .push(p.clone());
+
     let schedule = ProposerSchedule::vrf_sortition(&beacon, &set, height, &book.reputation);
     let mode = active_mode(book, cfg, &set, height);
     if mode != AggregationMode::ModeBLeaderless
@@ -285,19 +335,43 @@ pub fn on_macro_proposal(
         .entry(p.checkpoint.hash)
         .or_default()
         .insert(book.self_id);
-    book.votes.record(
-        book.self_id,
-        VoteRecord {
-            source: Epoch(0),
-            target: Epoch(0),
-            checkpoint: p.checkpoint.hash,
-        },
-    );
+
+    let vote = VoteRecord {
+        source: Epoch(height.0.saturating_sub(1)),
+        target: Epoch(height.0),
+        checkpoint: p.checkpoint.hash,
+        sig: ctx.signer.sign_bls(
+            dst::MACRO_VOTE,
+            &messages::vote_message(&VoteRecord {
+                source: Epoch(height.0.saturating_sub(1)),
+                target: Epoch(height.0),
+                checkpoint: p.checkpoint.hash,
+                sig: types::crypto_types::BlsSig([0; 96]),
+            }),
+        ),
+    };
+    book.votes.record(book.self_id, vote);
+
+    let mut actions = Actions::new();
+    if let Some(ev) = surround::scan_for_surround(&book.votes, &book.self_id)? {
+        actions.push(Action::EmitSlashEvidence {
+            offender: book.self_id,
+            evidence: SlashEvidence::Surround(ev),
+        });
+    }
+    if let Some(ev) = double_vote::scan_for_double_vote(&book.votes, &book.self_id)? {
+        actions.push(Action::EmitSlashEvidence {
+            offender: book.self_id,
+            evidence: SlashEvidence::DoubleVote(ev),
+        });
+    }
 
     let assign = subnet_assign(cfg, &set, &beacon);
     let subnet = SubnetId(assign.index_for(&book.self_id));
-    let sig = book::fixture_partial_sig(&book.self_id, &p.checkpoint.hash);
-    let mut actions = Actions::new();
+    let checkpoint_msg = messages::checkpoint_message(&p.checkpoint);
+    let sig = ctx.signer.sign_bls(dst::MACRO_CHECKPOINT, &checkpoint_msg);
+    book.partial_sigs
+        .insert((p.checkpoint.hash, book.self_id), sig);
     actions.push(Action::BroadcastBlsPartial(BlsPartial {
         subnet: if mode == AggregationMode::ModeASubnet {
             subnet
@@ -325,6 +399,7 @@ pub fn on_macro_proposal(
             signers,
             &set,
             &assign,
+            &book.partial_sigs,
         ) {
             if ModeASubnet::aggregator_for(subnet, &set, &assign) == Some(book.self_id) {
                 actions.push(Action::BroadcastSubnetAggregate(agg));
@@ -355,6 +430,18 @@ pub fn on_bls_partial(
         .valset
         .set_for(Epoch(0))?
         .ok_or_else(|| crate::Error::InvalidConfig("no validator set for epoch 0".into()))?;
+    let checkpoint = book
+        .candidate
+        .get(&height)
+        .cloned()
+        .expect("checkpoint for partial");
+
+    if !verify::verify_partial(&set, &bp, &checkpoint) {
+        book.rejected_crypto += 1;
+        return Ok(Actions::new());
+    }
+    book.partial_sigs
+        .insert((bp.checkpoint_hash, bp.validator), bp.sig);
 
     if book.emitted_macro_qc.contains(&bp.checkpoint_hash) {
         return Ok(Actions::new());
@@ -381,6 +468,7 @@ pub fn on_bls_partial(
                 signers,
                 &set,
                 &assign,
+                &book.partial_sigs,
             ) {
                 if ModeASubnet::aggregator_for(subnet, &set, &assign) == Some(book.self_id) {
                     actions.push(Action::BroadcastSubnetAggregate(agg));
@@ -412,19 +500,31 @@ pub fn on_bls_partial(
             if !should_assemble_qc(book, &signers_snapshot) {
                 return Ok(Actions::new());
             }
-            let qc = if mode == AggregationMode::ModeBLeaderless {
-                macro_qc::try_finalize_mode_b(bp.checkpoint_hash, &signers_snapshot, &set)
-            } else {
-                macro_qc::try_finalize_mode0(bp.checkpoint_hash, &signers_snapshot, &set)
-            };
-            let Some(qc) = qc else {
-                return Ok(Actions::new());
-            };
             let candidate = book
                 .candidate
                 .get(&height)
                 .cloned()
                 .expect("candidate present for emitted MacroQc");
+            let qc = if mode == AggregationMode::ModeBLeaderless {
+                macro_qc::try_finalize_mode_b(
+                    bp.checkpoint_hash,
+                    &signers_snapshot,
+                    &book.partial_sigs,
+                    &set,
+                    &candidate,
+                )
+            } else {
+                macro_qc::try_finalize_mode0(
+                    bp.checkpoint_hash,
+                    &signers_snapshot,
+                    &book.partial_sigs,
+                    &set,
+                    &candidate,
+                )
+            };
+            let Some(qc) = qc else {
+                return Ok(Actions::new());
+            };
             let signers_clone = signers_snapshot;
             Ok(finish_macro_qc_adoption(
                 book,
@@ -443,11 +543,15 @@ pub fn on_macro_qc_received(
     book: &mut MacroBook,
     cfg: &Config,
     qc: MacroQc,
-    _ctx: &HostContext<'_>,
+    ctx: &HostContext<'_>,
 ) -> Result<Actions> {
     if book.emitted_macro_qc.contains(&qc.checkpoint_hash) {
         return Ok(Actions::new());
     }
+    let set = ctx
+        .valset
+        .set_for(Epoch(0))?
+        .ok_or_else(|| crate::Error::InvalidConfig("no validator set for epoch 0".into()))?;
     let signers = book
         .partials
         .get(&qc.checkpoint_hash)
@@ -466,6 +570,10 @@ pub fn on_macro_qc_received(
         .get(&height)
         .cloned()
         .expect("candidate present at height");
+    if !verify::verify_macro_qc(&set, &qc, &candidate) {
+        book.rejected_crypto += 1;
+        return Ok(Actions::new());
+    }
     let mut actions = Actions::new();
     actions.push(Action::PersistMacroCheckpoint(candidate.clone()));
     actions.push(Action::PersistMacroQc(qc.clone()));
@@ -501,6 +609,20 @@ pub fn on_subnet_aggregate(
     ctx: &HostContext<'_>,
 ) -> Result<Actions> {
     if !book.candidate.values().any(|c| c.hash == agg.checkpoint_hash) {
+        return Ok(Actions::new());
+    }
+    let set = ctx
+        .valset
+        .set_for(Epoch(0))?
+        .ok_or_else(|| crate::Error::InvalidConfig("no validator set for epoch 0".into()))?;
+    let checkpoint = book
+        .candidate
+        .values()
+        .find(|c| c.hash == agg.checkpoint_hash)
+        .cloned()
+        .expect("checkpoint for aggregate");
+    if !verify::verify_subnet_agg(&set, &agg, &checkpoint, &book.partial_sigs) {
+        book.rejected_crypto += 1;
         return Ok(Actions::new());
     }
     let checkpoint_hash = agg.checkpoint_hash;
@@ -539,11 +661,15 @@ pub fn on_timer_fired(
             let schedule =
                 ProposerSchedule::vrf_sortition(&beacon, &set, height, &book.reputation);
             if schedule.backup == book.self_id {
+                let alpha = vrf_alpha(&beacon, height, &book.self_id);
+                let (vrf_proof, _) = ctx.signer.vrf_prove(&alpha)?;
+                let msg = messages::proposer_message(&book.self_id, &candidate);
+                let proposer_sig = ctx.signer.sign_bls(dst::MACRO_PROPOSER_SIG, &msg);
                 actions.push(Action::BroadcastMacroProposal(MacroProposal {
                     checkpoint: candidate.clone(),
                     proposer: book.self_id,
-                    vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, height, &book.self_id),
-                    proposer_sig: book::fixture_proposer_sig(&book.self_id, &candidate.hash),
+                    vrf_proof,
+                    proposer_sig,
                 }));
                 book.proposal_seen.insert(height);
             }
@@ -580,6 +706,9 @@ pub fn on_timer_fired(
                         .entry(cp.hash)
                         .or_default()
                         .insert(book.self_id);
+                    let checkpoint_msg = messages::checkpoint_message(&cp);
+                    let sig = ctx.signer.sign_bls(dst::MACRO_CHECKPOINT, &checkpoint_msg);
+                    book.partial_sigs.insert((cp.hash, book.self_id), sig);
                     actions.push(Action::BroadcastBlsPartial(BlsPartial {
                         subnet: if active_mode(book, cfg, &set, height)
                             == AggregationMode::ModeASubnet
@@ -590,7 +719,7 @@ pub fn on_timer_fired(
                         },
                         validator: book.self_id,
                         checkpoint_hash: cp.hash,
-                        sig: book::fixture_partial_sig(&book.self_id, &cp.hash),
+                        sig,
                     }));
                 }
             }
@@ -610,9 +739,10 @@ fn blob_id_of_checkpoint(cp: &MacroCheckpoint) -> BlobId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort};
+    use crate::ports::{Clock, DagView, Persistence, RandomnessBeacon, SignerPort, ValidatorSetPort};
+    use crypto::hash::{blake3_with_dst, dst as crypto_dst};
     use types::{
-        crypto_types::{BlsAggSig, BlsPubkey, BlsSig, VrfProof},
+        crypto_types::{BlsAggSig, BlsSig, VrfPubkey, VrfProof},
         macros::{MacroCheckpoint as Cp, MacroQc},
         micro::MicroQc,
         primitives::{Round, StakeWeight, ValidatorId},
@@ -620,27 +750,137 @@ mod tests {
         validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet},
     };
 
-    fn vset(n: u32) -> ValidatorSet {
-        let entries = (0..n)
-            .map(|i| {
-                let mut id = [0u8; 32];
-                id[..4].copy_from_slice(&i.to_be_bytes());
-                ValidatorEntry {
-                    id: ValidatorId(id),
-                    bls_pubkey: BlsPubkey([0; 48]),
-                    stake: StakeWeight(1),
-                    identity: ValidatorIdentity {
-                        asn: None,
-                        cloud: None,
-                        region: None,
-                    },
-                }
-            })
-            .collect();
-        ValidatorSet {
-            epoch: Epoch(0),
-            entries,
-            total_stake: StakeWeight(u64::from(n)),
+    struct TestKeyRing {
+        bls: Vec<crypto::bls::SecretKey>,
+        vrf: Vec<crypto::vrf::VrfKey>,
+    }
+
+    impl TestKeyRing {
+        fn new(n: u32) -> Self {
+            let seed = [0x33; 32];
+            let mut bls = Vec::with_capacity(n as usize);
+            let mut vrf = Vec::with_capacity(n as usize);
+            for i in 0..n {
+                let mut label = [0u8; 36];
+                label[..32].copy_from_slice(&seed);
+                label[32..].copy_from_slice(&i.to_be_bytes());
+                bls.push(
+                    crypto::bls::SecretKey::from_ikm(&blake3_with_dst(crypto_dst::VALIDATOR_BLS_PARTIAL, &label).0)
+                        .unwrap(),
+                );
+                vrf.push(crypto::vrf::VrfKey::from_seed(
+                    &blake3_with_dst(crypto_dst::MACRO_PROPOSER_SIG, &label).0,
+                ));
+            }
+            Self { bls, vrf }
+        }
+
+        fn vset(&self, n: u32) -> ValidatorSet {
+            let entries = (0..n)
+                .map(|i| {
+                    let mut id = [0u8; 32];
+                    id[..4].copy_from_slice(&i.to_be_bytes());
+                    ValidatorEntry {
+                        id: ValidatorId(id),
+                        bls_pubkey: self.bls[i as usize].public().to_bytes(),
+                        vrf_pubkey: VrfPubkey(self.vrf[i as usize].pubkey()),
+                        stake: StakeWeight(1),
+                        identity: ValidatorIdentity {
+                            asn: None,
+                            cloud: None,
+                            region: None,
+                        },
+                    }
+                })
+                .collect();
+            ValidatorSet {
+                epoch: Epoch(0),
+                entries,
+                total_stake: StakeWeight(u64::from(n)),
+            }
+        }
+    }
+
+    struct TestSigner<'a> {
+        ring: &'a TestKeyRing,
+        index: usize,
+    }
+
+    impl SignerPort for TestSigner<'_> {
+        fn sign_bls(&self, dst_tag: &[u8], msg: &[u8]) -> BlsSig {
+            crypto::bls::sign::sign(&self.ring.bls[self.index], dst_tag, msg)
+        }
+
+        fn vrf_prove(&self, alpha: &[u8]) -> Result<(VrfProof, Hash32)> {
+            Ok(crypto::vrf::vrf_prove(&self.ring.vrf[self.index], alpha))
+        }
+    }
+
+    struct TestHarness {
+        keys: TestKeyRing,
+        valset: StaticSet,
+    }
+
+    impl TestHarness {
+        fn new(n: u32) -> Self {
+            let keys = TestKeyRing::new(n);
+            let set = keys.vset(n);
+            Self {
+                keys,
+                valset: StaticSet(set),
+            }
+        }
+
+        fn set(&self) -> &ValidatorSet {
+            &self.valset.0
+        }
+
+        fn signer(&self, voter_idx: usize) -> TestSigner<'_> {
+            TestSigner {
+                ring: &self.keys,
+                index: voter_idx,
+            }
+        }
+
+        fn ctx<'a>(&'a self, signer: &'a TestSigner<'a>) -> HostContext<'a> {
+            static DAG: EmptyDag = EmptyDag;
+            static CLOCK: FixedClock = FixedClock;
+            static BEACON: ZeroBeacon = ZeroBeacon;
+            static PERSIST: NoopP = NoopP;
+            HostContext {
+                dag: &DAG,
+                clock: &CLOCK,
+                valset: &self.valset,
+                beacon: &BEACON,
+                persistence: &PERSIST,
+                signer,
+            }
+        }
+
+        fn proposal(&self, proposer_idx: usize, cp: &MacroCheckpoint, beacon: &Hash32) -> MacroProposal {
+            let proposer = self.set().entries[proposer_idx].id;
+            let alpha = vrf_alpha(beacon, cp.height, &proposer);
+            let signer = TestSigner {
+                ring: &self.keys,
+                index: proposer_idx,
+            };
+            let (vrf_proof, _) = signer.vrf_prove(&alpha).unwrap();
+            let msg = messages::proposer_message(&proposer, cp);
+            MacroProposal {
+                checkpoint: cp.clone(),
+                proposer,
+                vrf_proof,
+                proposer_sig: signer.sign_bls(crypto_dst::MACRO_PROPOSER_SIG, &msg),
+            }
+        }
+
+        fn partial(&self, validator_idx: usize, cp: &MacroCheckpoint) -> BlsSig {
+            let msg = messages::checkpoint_message(cp);
+            TestSigner {
+                ring: &self.keys,
+                index: validator_idx,
+            }
+            .sign_bls(crypto_dst::MACRO_CHECKPOINT, &msg)
         }
     }
 
@@ -714,43 +954,27 @@ mod tests {
         }
     }
 
-    fn host_ctx(set: ValidatorSet) -> TestHost {
-        TestHost {
-            valset: StaticSet(set),
-        }
-    }
-
-    struct TestHost {
-        valset: StaticSet,
-    }
-
-    impl TestHost {
-        fn ctx(&self) -> HostContext<'_> {
-            static DAG: EmptyDag = EmptyDag;
-            static CLOCK: FixedClock = FixedClock;
-            static BEACON: ZeroBeacon = ZeroBeacon;
-            static PERSIST: NoopP = NoopP;
-            HostContext {
-                dag: &DAG,
-                clock: &CLOCK,
-                valset: &self.valset,
-                beacon: &BEACON,
-                persistence: &PERSIST,
-            }
-        }
+    fn host_ctx(n: u32) -> TestHarness {
+        TestHarness::new(n)
     }
 
     #[test]
     fn ring_fills_then_primary_emits_proposal() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let beacon = Hash32::zero();
         let primary_id =
             ProposerSchedule::vrf_sortition(&beacon, &set, Height(0), &std::collections::HashMap::new())
                 .primary;
+        let primary_idx = set
+            .entries
+            .iter()
+            .position(|e| e.id == primary_id)
+            .unwrap();
         let mut book = MacroBook::new(primary_id);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set);
-        let ctx = host.ctx();
+        let signer = harness.signer(primary_idx);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -775,12 +999,12 @@ mod tests {
 
     #[test]
     fn non_primary_validator_does_not_emit_proposal() {
-        let set = vset(4);
-        let not_primary = set.entries[2].id;
+        let harness = host_ctx(4);
+        let not_primary = harness.set().entries[2].id;
         let mut book = MacroBook::new(not_primary);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set);
-        let ctx = host.ctx();
+        let signer = harness.signer(2);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -800,12 +1024,13 @@ mod tests {
 
     #[test]
     fn proposal_from_correct_primary_emits_partial_and_soft_confirmed() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[2].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(2);
+        let ctx = harness.ctx(&signer);
         let beacon = Hash32::zero();
 
         for i in 0..cfg.macro_fin.macro_window_w {
@@ -818,26 +1043,25 @@ mod tests {
         let candidate = book.candidate.get(&Height(0)).cloned().unwrap();
         let proposer =
             ProposerSchedule::vrf_sortition(&beacon, &set, Height(0), &book.reputation).primary;
-        let proposal = MacroProposal {
-            checkpoint: candidate.clone(),
-            proposer,
-            vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, Height(0), &proposer),
-            proposer_sig: book::fixture_proposer_sig(&proposer, &candidate.hash),
-        };
+        let proposer_idx = set.entries.iter().position(|e| e.id == proposer).unwrap();
+        let proposal = harness.proposal(proposer_idx, &candidate, &beacon);
         let actions = on_macro_proposal(&mut book, &cfg, proposal, &ctx).unwrap();
-        assert_eq!(actions.len(), 2);
-        assert!(matches!(&actions[0], Action::BroadcastBlsPartial(_)));
-        assert!(matches!(&actions[1], Action::UpdateBlobStatus { .. }));
+        assert!(actions.iter().any(|a| matches!(a, Action::BroadcastBlsPartial(_))));
+        assert!(actions.iter().any(|a| matches!(
+            a,
+            Action::UpdateBlobStatus { .. }
+        )));
     }
 
     #[test]
     fn proposal_from_wrong_proposer_is_dropped() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[1].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(1);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -853,15 +1077,9 @@ mod tests {
         let wrong = set
             .entries
             .iter()
-            .map(|e| e.id)
-            .find(|id| *id != schedule.primary && *id != schedule.backup)
+            .position(|e| e.id != schedule.primary && e.id != schedule.backup)
             .expect("non-proposer exists for n=4");
-        let proposal = MacroProposal {
-            checkpoint: candidate.clone(),
-            proposer: wrong,
-            vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, Height(0), &wrong),
-            proposer_sig: book::fixture_proposer_sig(&wrong, &candidate.hash),
-        };
+        let proposal = harness.proposal(wrong, &candidate, &beacon);
         let actions = on_macro_proposal(&mut book, &cfg, proposal, &ctx).unwrap();
         assert!(actions.is_empty());
     }
@@ -879,13 +1097,13 @@ mod tests {
 
     #[test]
     fn bls_partial_threshold_emits_macro_qc_and_justified() {
-        let set = vset(4);
-        // Lex-min signer assembles the QC (`should_assemble_qc`).
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[0].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(0);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -898,20 +1116,17 @@ mod tests {
         let beacon = Hash32::zero();
         let proposer =
             ProposerSchedule::vrf_sortition(&beacon, &set, Height(0), &book.reputation).primary;
-        let proposal = MacroProposal {
-            checkpoint: candidate.clone(),
-            proposer,
-            vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, Height(0), &proposer),
-            proposer_sig: book::fixture_proposer_sig(&proposer, &candidate.hash),
-        };
+        let proposer_idx = set.entries.iter().position(|e| e.id == proposer).unwrap();
+        let proposal = harness.proposal(proposer_idx, &candidate, &beacon);
         let _ = on_macro_proposal(&mut book, &cfg, proposal, &ctx).unwrap();
         let mut threshold_actions = None;
-        for v in [set.entries[0].id, set.entries[2].id, set.entries[3].id] {
+        for idx in [0usize, 2, 3] {
+            let v = set.entries[idx].id;
             let bp = BlsPartial {
                 subnet: SubnetId(0),
                 validator: v,
                 checkpoint_hash: candidate.hash,
-                sig: book::fixture_partial_sig(&v, &candidate.hash),
+                sig: harness.partial(idx, &candidate),
             };
             let actions = on_bls_partial(&mut book, &cfg, bp, &ctx).unwrap();
             if actions.iter().any(|a| matches!(a, Action::BroadcastMacroQc(_))) {
@@ -940,12 +1155,13 @@ mod tests {
 
     #[test]
     fn bls_partial_below_threshold_is_silent() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[1].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(1);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -959,7 +1175,7 @@ mod tests {
             subnet: SubnetId(0),
             validator: set.entries[0].id,
             checkpoint_hash: candidate.hash,
-            sig: book::fixture_partial_sig(&set.entries[0].id, &candidate.hash),
+            sig: harness.partial(0, &candidate),
         };
         let actions = on_bls_partial(&mut book, &cfg, bp, &ctx).unwrap();
         assert!(actions.is_empty());
@@ -967,12 +1183,13 @@ mod tests {
 
     #[test]
     fn bls_partial_unknown_subnet_or_hash_ignored() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[1].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(1);
+        let ctx = harness.ctx(&signer);
 
         let bp = BlsPartial {
             subnet: SubnetId(7),
@@ -995,12 +1212,13 @@ mod tests {
 
     #[test]
     fn macro_qc_received_idempotent_after_local_emit() {
-        let set = vset(4);
+        let harness = host_ctx(4);
+        let set = harness.set().clone();
         let voter = set.entries[0].id;
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(set.clone());
-        let ctx = host.ctx();
+        let signer = harness.signer(0);
+        let ctx = harness.ctx(&signer);
 
         for i in 0..cfg.macro_fin.macro_window_w {
             let mut actions = Actions::new();
@@ -1013,30 +1231,28 @@ mod tests {
         let beacon = Hash32::zero();
         let proposer =
             ProposerSchedule::vrf_sortition(&beacon, &set, Height(0), &book.reputation).primary;
-        let proposal = MacroProposal {
-            checkpoint: candidate.clone(),
-            proposer,
-            vrf_proof: ProposerSchedule::vrf_proof_for(&beacon, Height(0), &proposer),
-            proposer_sig: book::fixture_proposer_sig(&proposer, &candidate.hash),
-        };
+        let proposer_idx = set.entries.iter().position(|e| e.id == proposer).unwrap();
+        let proposal = harness.proposal(proposer_idx, &candidate, &beacon);
         let _ = on_macro_proposal(&mut book, &cfg, proposal, &ctx).unwrap();
-        for v in [set.entries[0].id, set.entries[2].id, set.entries[3].id] {
+        for idx in [0usize, 2, 3] {
+            let v = set.entries[idx].id;
             let bp = BlsPartial {
                 subnet: SubnetId(0),
                 validator: v,
                 checkpoint_hash: candidate.hash,
-                sig: book::fixture_partial_sig(&v, &candidate.hash),
+                sig: harness.partial(idx, &candidate),
             };
             let _ = on_bls_partial(&mut book, &cfg, bp, &ctx).unwrap();
         }
-        let qc = MacroQc {
-            checkpoint_hash: candidate.hash,
-            mode: types::macros::AggregationMode::Mode0Flat,
-            agg: BlsAggSig {
-                sig: BlsSig([0xCD; 96]),
-                bitmap: vec![0b1111],
-            },
-        };
+        let signers = book.partials.get(&candidate.hash).cloned().unwrap();
+        let qc = macro_qc::try_finalize_mode0(
+            candidate.hash,
+            &signers,
+            &book.partial_sigs,
+            &set,
+            &candidate,
+        )
+        .expect("qc from partials");
         let actions = on_macro_qc_received(&mut book, &cfg, qc, &ctx).unwrap();
         assert!(actions.is_empty());
     }
@@ -1046,8 +1262,9 @@ mod tests {
         let voter = ValidatorId([9; 32]);
         let mut book = MacroBook::new(voter);
         let cfg = Config::default_table_17_1();
-        let host = host_ctx(vset(4));
-        let ctx = host.ctx();
+        let harness = host_ctx(4);
+        let signer = harness.signer(0);
+        let ctx = harness.ctx(&signer);
 
         let qc = MacroQc {
             checkpoint_hash: Hash32([0x42; 32]),

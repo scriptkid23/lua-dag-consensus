@@ -98,6 +98,35 @@ pub struct Pop(pub BlsSig);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
 pub struct VrfProof(pub [u8; 80]);
 
+/// Edwards25519 compressed public key for ECVRF (32 bytes).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    PartialEq,
+    BorshSerialize,
+    BorshDeserialize,
+    Serialize,
+    Deserialize,
+)]
+pub struct VrfPubkey(pub [u8; 32]);
+
+impl VrfPubkey {
+    /// All-zero pubkey (tests / unset).
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self([0; 32])
+    }
+
+    /// True when no VRF key is configured.
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.0 == [0u8; 32]
+    }
+}
+
 impl VrfProof {
     /// All-zero proof; placeholder until real ECVRF sortition lands in 03c-2.
     #[must_use]

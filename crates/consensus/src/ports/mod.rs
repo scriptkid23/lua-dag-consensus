@@ -7,10 +7,12 @@ pub mod clock;
 pub mod dag_view;
 pub mod persistence;
 pub mod rng_beacon;
+pub mod signer;
 pub mod validator_set;
 
 pub use clock::Clock;
 pub use dag_view::DagView;
 pub use persistence::Persistence;
 pub use rng_beacon::RandomnessBeacon;
+pub use signer::{PanickingSigner, SignerPort};
 pub use validator_set::ValidatorSetPort;

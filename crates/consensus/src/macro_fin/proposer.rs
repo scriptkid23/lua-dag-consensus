@@ -32,6 +32,16 @@ pub fn macro_sortition_beta(beacon: &Hash32, height: Height, validator: &Validat
     blake3_with_dst(dst::MACRO_PROPOSAL, &buf)
 }
 
+/// ECVRF alpha bytes: `beacon ‖ height ‖ validator_id` (pre-hash input).
+#[must_use]
+pub fn vrf_alpha(beacon: &Hash32, height: Height, validator: &ValidatorId) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(40);
+    buf.extend_from_slice(&beacon.0);
+    buf.extend_from_slice(&height.0.to_be_bytes());
+    buf.extend_from_slice(validator.as_bytes());
+    buf
+}
+
 impl ProposerSchedule {
     /// Round-robin by height (03c-1 / tests).
     #[must_use]
@@ -111,6 +121,7 @@ mod tests {
                 ValidatorEntry {
                     id: ValidatorId(id),
                     bls_pubkey: BlsPubkey([0; 48]),
+                    vrf_pubkey: types::crypto_types::VrfPubkey::zero(),
                     stake: StakeWeight(1),
                     identity: ValidatorIdentity {
                         asn: None,

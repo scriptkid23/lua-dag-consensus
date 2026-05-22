@@ -229,12 +229,14 @@ mod tests {
         static VALSET: EmptyValset = EmptyValset;
         static BEACON: FixedBeacon = FixedBeacon(types::crypto_types::Hash32::zero());
         static PERSIST: NoopPersistence = NoopPersistence;
+        static SIGNER: crate::ports::PanickingSigner = crate::ports::PanickingSigner;
         HostContext {
             dag: &DAG,
             clock: &CLOCK,
             valset: &VALSET,
             beacon: &BEACON,
             persistence: &PERSIST,
+            signer: &SIGNER,
         }
     }
 }
