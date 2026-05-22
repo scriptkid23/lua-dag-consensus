@@ -3,6 +3,10 @@
 //! The orchestrator owns one [`TokioClock`] and forwards
 //! `Action::ScheduleTimer` to [`schedule`]; when the timer fires it
 //! emits `Event::TimerFired(id)` back to the SM.
+//!
+//! Bullshark wave timers and macro-finality timers (`T_macropropose`, Mode B
+//! deadline) share this dispatcher via `Event::TimerFired`. Production gossip
+//! verification for L3 topics: plan `06b-l3`.
 
 use std::time::{Duration, Instant};
 

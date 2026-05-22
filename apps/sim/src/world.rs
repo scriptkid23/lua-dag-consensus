@@ -1,12 +1,14 @@
 //! Owns all validator state machines and ticks them deterministically.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use consensus::{
     Config, HostContext, StateMachine,
     action::Action,
     bullshark::{WaveId, select_anchor},
-    ports::{Clock, DagView, Persistence, ValidatorSetPort},
+    leader::beacon::chain_beacon,
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
     state_machine::Actions,
 };
 use rand::SeedableRng;
@@ -51,6 +53,10 @@ pub struct World {
     pub timer: VirtualTimer,
     /// When set, anchor-round vertices are never inserted or delivered.
     pub anchor_withhold: bool,
+    /// Macro QC hashes that already advanced the shared beacon (chain once).
+    macro_qc_beacon_chained: HashSet<Hash32>,
+    /// Drop `MacroProposal` events from this proposer (Mode B adversary).
+    pub suppress_macro_proposer: Option<ValidatorId>,
 }
 
 impl World {
@@ -100,7 +106,14 @@ impl World {
             virtual_round: 0,
             timer: VirtualTimer::new(),
             anchor_withhold: false,
+            macro_qc_beacon_chained: HashSet::new(),
+            suppress_macro_proposer: None,
         }
+    }
+
+    /// Suppress macro proposals from `proposer` (sim adversary).
+    pub fn suppress_macro_proposals_from(&mut self, proposer: ValidatorId) {
+        self.suppress_macro_proposer = Some(proposer);
     }
 
     /// Withhold the ECVRF anchor vertex each wave (simulates anchor `DoS`).
@@ -130,6 +143,14 @@ impl World {
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
         let n = u32::try_from(self.machines.len()).expect("validator count");
         for action in actions {
+            if let Action::BroadcastMacroProposal(ref p) = action {
+                if self
+                    .suppress_macro_proposer
+                    .is_some_and(|id| id == p.proposer)
+                {
+                    continue;
+                }
+            }
             match action {
                 Action::BroadcastMicroQc(qc) => {
                     self.persistence[validator_idx as usize]
@@ -144,6 +165,18 @@ impl World {
                     );
                 }
                 Action::BroadcastMacroProposal(p) => {
+                    let n_e = n;
+                    if consensus::macro_fin::mode_a_active(consensus::macro_fin::compute_ke(
+                        &self.config,
+                        n_e,
+                    )) {
+                        // Gossip skips the sender; proposer must still emit subnet partials.
+                        self.step_validator(
+                            validator_idx,
+                            consensus::Event::MacroProposalReceived(p.clone()),
+                            now,
+                        );
+                    }
                     self.net.enqueue_from_action(
                         validator_idx,
                         &Action::BroadcastMacroProposal(p),
@@ -182,6 +215,11 @@ impl World {
                     self.persistence[validator_idx as usize]
                         .store_macro_qc(&qc)
                         .expect("virtual persistence never fails");
+                    if self.macro_qc_beacon_chained.insert(qc.checkpoint_hash) {
+                        let prev = self.beacon.current().expect("beacon read");
+                        let next = chain_beacon(&prev, &qc.checkpoint_hash);
+                        self.beacon.set(next);
+                    }
                 }
                 Action::UpdateBlobStatus { blob, status } => {
                     self.persistence[validator_idx as usize].update_blob_status(blob, status);
@@ -196,8 +234,14 @@ impl World {
                     );
                 }
                 Action::CancelTimer(id) => self.timer.cancel(id),
-                Action::BroadcastSubnetAggregate(_) => {
-                    debug_assert!(false, "Mode A subnet aggregate is 03c-2");
+                Action::BroadcastSubnetAggregate(agg) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastSubnetAggregate(agg),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
                 }
                 Action::EmitSlashEvidence { .. } => {
                     debug_assert!(false, "slashing emission is 03d");
@@ -207,6 +251,14 @@ impl World {
     }
 
     fn step_validator(&mut self, validator_idx: u32, event: consensus::Event, now: u64) {
+        if let consensus::Event::MacroProposalReceived(ref p) = event {
+            if self
+                .suppress_macro_proposer
+                .is_some_and(|id| id == p.proposer)
+            {
+                return;
+            }
+        }
         let idx = validator_idx as usize;
         let ctx = HostContext {
             dag: self.dag.as_ref(),

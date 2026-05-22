@@ -32,6 +32,8 @@ pub enum Scenario {
     AnchorDos,
     /// Macro proposer fails primary + backup → Mode B.
     ModeBFallback,
+    /// Mode A subnet aggregation (dev config, ≥8 validators).
+    ModeASubnet,
     /// Inject an equivocating validator.
     EquivocationInject,
     /// Byzantine split-brain scenario.

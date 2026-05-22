@@ -1,12 +1,17 @@
 //! Mode 0 flat MacroQc aggregation (L3 03c-1).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
     macros::{AggregationMode, MacroQc},
     primitives::ValidatorId,
     validator::ValidatorSet,
+};
+
+use crate::{
+    event::{SubnetAggregate, SubnetId},
+    macro_fin::aggregation::mode_a_subnet::try_finalize_mode_a,
 };
 
 /// **Deprecated skeleton** — kept so existing re-exports continue to compile.
@@ -59,6 +64,30 @@ pub fn try_finalize_mode0(
             sig: BlsSig([0xCD; 96]),
             bitmap,
         },
+    })
+}
+
+/// Build a `MacroQc` in `AggregationMode::ModeASubnet` from subnet aggregates.
+#[must_use]
+pub fn try_finalize_mode_a_from_aggs(
+    target: Hash32,
+    aggs: &HashMap<SubnetId, SubnetAggregate>,
+    set: &ValidatorSet,
+) -> Option<MacroQc> {
+    try_finalize_mode_a(target, aggs, set)
+}
+
+/// Build a `MacroQc` in `AggregationMode::ModeBLeaderless` (same threshold as Mode 0).
+#[must_use]
+pub fn try_finalize_mode_b(
+    target: Hash32,
+    signers: &BTreeSet<ValidatorId>,
+    set: &ValidatorSet,
+) -> Option<MacroQc> {
+    let qc = try_finalize_mode0(target, signers, set)?;
+    Some(MacroQc {
+        mode: AggregationMode::ModeBLeaderless,
+        ..qc
     })
 }
 

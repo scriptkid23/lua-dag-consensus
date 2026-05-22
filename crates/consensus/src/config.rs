@@ -74,6 +74,9 @@ pub struct AggregationParams {
     pub subnet_flat_threshold: u32,
     /// At/above this, use Mode A subnet aggregation.
     pub subnet_full_threshold: u32,
+    /// Dev-only: override `K_e` for sim Mode A scenarios (not for production).
+    #[serde(default)]
+    pub sim_force_ke: Option<u32>,
 }
 
 /// Leader election parameters.
@@ -148,6 +151,7 @@ impl Config {
             aggregation: AggregationParams {
                 subnet_flat_threshold: 500,
                 subnet_full_threshold: 1_000,
+                sim_force_ke: None,
             },
             leader: LeaderParams {
                 reputation_floor: 0.8,
@@ -169,6 +173,15 @@ impl Config {
                 snapshot_interval_macros: 256,
             },
         }
+    }
+
+    /// Dev-only table: forces Mode A with 8 validators in sim (NOT production).
+    #[must_use]
+    pub fn sim_mode_a_dev() -> Self {
+        let mut c = Self::default_table_17_1();
+        c.aggregation.subnet_flat_threshold = 8;
+        c.aggregation.sim_force_ke = Some(8);
+        c
     }
 
     /// Parse a TOML string into a `Config`.

@@ -6,6 +6,12 @@ use crate::config::Config;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reputation(pub f64);
 
+impl Default for Reputation {
+    fn default() -> Self {
+        Self::neutral()
+    }
+}
+
 impl Reputation {
     /// Neutral starting reputation.
     #[must_use]
