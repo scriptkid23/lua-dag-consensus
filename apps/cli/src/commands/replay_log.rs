@@ -15,7 +15,10 @@ pub fn run(args: &ReplayArgs) -> Result<()> {
     let events: Vec<Event> =
         borsh::from_slice(&bytes).map_err(|e| anyhow::anyhow!("decode Vec<Event>: {e}"))?;
 
-    let mut sm = StateMachine::new(Config::default_table_17_1());
+    let mut sm = StateMachine::new(
+        Config::default_table_17_1(),
+        types::primitives::ValidatorId::default(),
+    );
     let ctx = crate::stub_context::replay_host_context();
     let mut total_actions = 0usize;
     for (i, ev) in events.into_iter().enumerate() {

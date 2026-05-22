@@ -75,7 +75,7 @@ impl World {
                     region: None,
                 },
             });
-            machines.push(StateMachine::new(config.clone()));
+            machines.push(StateMachine::new(config.clone(), ValidatorId(id)));
         }
         let total = u64::from(n) * 1_000;
         let set = ValidatorSet {
@@ -128,6 +128,7 @@ impl World {
     }
 
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
+        let n = u32::try_from(self.machines.len()).expect("validator count");
         for action in actions {
             match action {
                 Action::BroadcastMicroQc(qc) => {
@@ -137,10 +138,53 @@ impl World {
                     self.net.enqueue_from_action(
                         validator_idx,
                         &Action::BroadcastMicroQc(qc),
-                        u32::try_from(self.machines.len()).expect("validator count"),
+                        n,
                         now,
                         &mut self.rng,
                     );
+                }
+                Action::BroadcastMacroProposal(p) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastMacroProposal(p),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::BroadcastBlsPartial(bp) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastBlsPartial(bp),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::BroadcastMacroQc(qc) => {
+                    self.persistence[validator_idx as usize]
+                        .store_macro_qc(&qc)
+                        .expect("virtual persistence never fails");
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastMacroQc(qc),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::PersistMacroCheckpoint(cp) => {
+                    self.persistence[validator_idx as usize]
+                        .store_macro_checkpoint(&cp)
+                        .expect("virtual persistence never fails");
+                }
+                Action::PersistMacroQc(qc) => {
+                    self.persistence[validator_idx as usize]
+                        .store_macro_qc(&qc)
+                        .expect("virtual persistence never fails");
+                }
+                Action::UpdateBlobStatus { blob, status } => {
+                    self.persistence[validator_idx as usize].update_blob_status(blob, status);
                 }
                 Action::ScheduleTimer { id, delay_nanos } => {
                     self.timer.schedule(
@@ -152,16 +196,11 @@ impl World {
                     );
                 }
                 Action::CancelTimer(id) => self.timer.cancel(id),
-                Action::PersistMacroQc(qc) => {
-                    let _ = self.persistence[validator_idx as usize].store_macro_qc(&qc);
+                Action::BroadcastSubnetAggregate(_) => {
+                    debug_assert!(false, "Mode A subnet aggregate is 03c-2");
                 }
-                Action::UpdateBlobStatus { .. } => {}
-                Action::BroadcastMacroProposal(_)
-                | Action::BroadcastBlsPartial(_)
-                | Action::BroadcastSubnetAggregate(_)
-                | Action::BroadcastMacroQc(_)
-                | Action::EmitSlashEvidence { .. } => {
-                    debug_assert!(false, "unexpected non-L2 action in 03b-1: {action:?}");
+                Action::EmitSlashEvidence { .. } => {
+                    debug_assert!(false, "slashing emission is 03d");
                 }
             }
         }

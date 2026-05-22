@@ -35,6 +35,14 @@ pub fn run() -> Result<()> {
     runtime.block_on(async move { run_async(cfg, args).await })
 }
 
+/// Derive a deterministic `ValidatorId` from the node identity label
+/// (devnet-only; production keying lands with plan 06b-l3).
+fn validator_id_from_label(label: &str) -> types::primitives::ValidatorId {
+    use crypto::hash::{blake3_with_dst, dst};
+    let h = blake3_with_dst(dst::DEVNET_PEER_IDENTITY, label.as_bytes());
+    types::primitives::ValidatorId(h.0)
+}
+
 async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     info!(target: "node", "starting LUA-DAG node");
 
@@ -51,7 +59,8 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     let persistence = RocksPersistence::new(db);
 
     // Consensus.
-    let sm: StateMachine = StateMachine::new(cfg.consensus.clone());
+    let self_id = validator_id_from_label(&cfg.node.identity.label);
+    let sm: StateMachine = StateMachine::new(cfg.consensus.clone(), self_id);
     let _clock = TokioClock::new();
 
     // Bridge (events_tx fed into consensus; bridge.actions_rx is drained but unused

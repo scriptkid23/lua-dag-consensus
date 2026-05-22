@@ -2,7 +2,7 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use types::{
-    macros::{MacroProposal, MacroQc},
+    macros::{MacroCheckpoint, MacroProposal, MacroQc},
     micro::MicroQc,
     primitives::{BlobId, ValidatorId},
     slashing::SlashEvidence,
@@ -37,6 +37,10 @@ pub enum Action {
     CancelTimer(TimerId),
     /// Persist a finalized MacroQc.
     PersistMacroQc(MacroQc),
+    /// Persist a finalized MacroCheckpoint (emitted alongside `PersistMacroQc`).
+    /// Wires the existing `Persistence::store_macro_checkpoint` port; lets the
+    /// sim `lock_macro` checker group adopted MacroQcs by height.
+    PersistMacroCheckpoint(MacroCheckpoint),
     /// Emit slashing evidence to gossip + storage.
     EmitSlashEvidence {
         /// The offender.

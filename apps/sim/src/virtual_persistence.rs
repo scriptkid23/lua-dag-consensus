@@ -1,13 +1,16 @@
 //! In-memory `Persistence` impl for the simulator.
 
-use std::{collections::HashMap, sync::RwLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::RwLock,
+};
 
-use consensus::ports::persistence::Persistence;
+use consensus::{api::tier::BlobStatus, ports::persistence::Persistence};
 use types::{
     crypto_types::Hash32,
     macros::{MacroCheckpoint, MacroQc},
     micro::MicroQc,
-    primitives::Height,
+    primitives::{BlobId, Height},
     slashing::SlashEvidence,
 };
 
@@ -18,6 +21,7 @@ pub struct VirtualPersistence {
     macro_cps: RwLock<HashMap<Height, MacroCheckpoint>>,
     macro_qcs: RwLock<HashMap<Hash32, MacroQc>>,
     slash_log: RwLock<Vec<SlashEvidence>>,
+    blob_status: RwLock<BTreeMap<BlobId, BlobStatus>>,
 }
 
 impl VirtualPersistence {
@@ -43,6 +47,44 @@ impl VirtualPersistence {
     #[must_use]
     pub fn all_micro_qcs(&self) -> Vec<MicroQc> {
         self.micro_qcs.read().unwrap().values().cloned().collect()
+    }
+
+    /// True if at least one macro QC is stored (checker helper).
+    #[must_use]
+    pub fn any_macro_qc(&self) -> bool {
+        !self.macro_qcs.read().unwrap().is_empty()
+    }
+
+    /// Snapshot all stored macro QCs (checker helper).
+    #[must_use]
+    pub fn all_macro_qcs(&self) -> Vec<MacroQc> {
+        self.macro_qcs.read().unwrap().values().cloned().collect()
+    }
+
+    /// Look up a blob's status.
+    #[must_use]
+    pub fn blob_status(&self, blob: &BlobId) -> Option<BlobStatus> {
+        self.blob_status.read().unwrap().get(blob).copied()
+    }
+
+    /// Monotonic update: never downgrades.
+    pub fn update_blob_status(&self, blob: BlobId, status: BlobStatus) {
+        let mut map = self.blob_status.write().unwrap();
+        let entry = map.entry(blob).or_insert(status);
+        if status > *entry {
+            *entry = status;
+        }
+    }
+
+    /// Count blobs at `BlobStatus::Finalized`.
+    #[must_use]
+    pub fn finalized_count(&self) -> usize {
+        self.blob_status
+            .read()
+            .unwrap()
+            .values()
+            .filter(|s| **s == BlobStatus::Finalized)
+            .count()
     }
 }
 
@@ -86,5 +128,34 @@ impl Persistence for VirtualPersistence {
 
     fn macro_qc_for(&self, checkpoint_hash: &Hash32) -> consensus::Result<Option<MacroQc>> {
         Ok(self.macro_qcs.read().unwrap().get(checkpoint_hash).cloned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use consensus::api::tier::BlobStatus;
+    use types::primitives::BlobId;
+
+    #[test]
+    fn blob_status_is_monotonic_and_readable() {
+        let p = VirtualPersistence::new();
+        let blob = BlobId([1; 32]);
+        assert_eq!(p.blob_status(&blob), None);
+        p.update_blob_status(blob, BlobStatus::SoftConfirmed);
+        assert_eq!(p.blob_status(&blob), Some(BlobStatus::SoftConfirmed));
+        p.update_blob_status(blob, BlobStatus::Justified);
+        assert_eq!(p.blob_status(&blob), Some(BlobStatus::Justified));
+        p.update_blob_status(blob, BlobStatus::SoftConfirmed);
+        assert_eq!(p.blob_status(&blob), Some(BlobStatus::Justified));
+    }
+
+    #[test]
+    fn finalized_count_returns_only_finalized() {
+        let p = VirtualPersistence::new();
+        p.update_blob_status(BlobId([1; 32]), BlobStatus::Finalized);
+        p.update_blob_status(BlobId([2; 32]), BlobStatus::Justified);
+        p.update_blob_status(BlobId([3; 32]), BlobStatus::Finalized);
+        assert_eq!(p.finalized_count(), 2);
     }
 }

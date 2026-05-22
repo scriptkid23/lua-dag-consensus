@@ -100,6 +100,7 @@ impl Bridge {
                 Ok(())
             }
             Action::PersistMacroQc(_)
+            | Action::PersistMacroCheckpoint(_)
             | Action::EmitSlashEvidence { .. }
             | Action::UpdateBlobStatus { .. } => {
                 // Storage / API — not a network concern.

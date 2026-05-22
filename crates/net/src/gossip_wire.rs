@@ -33,6 +33,7 @@ pub fn outbound_broadcast(action: &Action) -> Result<Option<(Topic, Vec<u8>)>> {
             (Topic::SlashEvidence, encode_action_payload(evidence)?)
         }
         Action::PersistMacroQc(_)
+        | Action::PersistMacroCheckpoint(_)
         | Action::ScheduleTimer { .. }
         | Action::CancelTimer(_)
         | Action::UpdateBlobStatus { .. } => return Ok(None),

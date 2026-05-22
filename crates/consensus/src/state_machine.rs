@@ -2,6 +2,8 @@
 
 use smallvec::SmallVec;
 
+use types::primitives::ValidatorId;
+
 use crate::{
     action::Action,
     bullshark::{WaveBook, micro_qc::EmittedSet},
@@ -9,6 +11,7 @@ use crate::{
     error::Result,
     event::Event,
     host_context::HostContext,
+    macro_fin::MacroBook,
 };
 
 /// Up-to-sixteen outgoing actions per event keeps things stack-allocated
@@ -24,20 +27,23 @@ pub struct StateMachine {
     /// Active protocol parameters.
     cfg: Config,
     /// Checkpoint hashes for which this validator already broadcast a MicroQc.
-    /// Kept after the `l2_minimal` deletion to keep `MicroQcAssembled` idempotent.
     emitted: EmittedSet,
     /// Committed waves and slow-path timers.
     waves: WaveBook,
+    /// L3 macro-finality bookkeeping (plan 03c-1).
+    macros: MacroBook,
 }
 
 impl StateMachine {
-    /// Build a new state machine with the supplied configuration.
+    /// Build a new state machine with the supplied configuration and
+    /// the validator identity it speaks for (proposer self-check + lock_macro).
     #[must_use]
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(cfg: Config, self_id: ValidatorId) -> Self {
         Self {
             cfg,
             emitted: EmittedSet::new(),
             waves: WaveBook::new(),
+            macros: MacroBook::new(self_id),
         }
     }
 
@@ -51,13 +57,22 @@ impl StateMachine {
     /// resulting [`Action`]s.
     pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
         match event {
-            Event::CertifiedVertexReceived(cv) => crate::bullshark::on_certified_vertex(
-                &mut self.emitted,
-                &mut self.waves,
-                &self.cfg,
-                cv,
-                ctx,
-            ),
+            Event::CertifiedVertexReceived(cv) => {
+                let mut actions = crate::bullshark::on_certified_vertex(
+                    &mut self.emitted,
+                    &mut self.waves,
+                    &self.cfg,
+                    cv,
+                    ctx,
+                )?;
+                crate::macro_fin::on_local_micro_qcs(
+                    &mut self.macros,
+                    &self.cfg,
+                    ctx,
+                    &mut actions,
+                )?;
+                Ok(actions)
+            }
             Event::MicroQcAssembled(qc) => {
                 crate::bullshark::on_micro_qc_assembled(&self.emitted, qc)
             }
@@ -68,20 +83,18 @@ impl StateMachine {
                 id,
                 ctx,
             ),
-            Event::MacroProposalReceived(_) => {
-                // TODO(plan 03c): macro proposer dispatch.
-                Ok(Actions::new())
+            Event::MacroProposalReceived(p) => {
+                crate::macro_fin::on_macro_proposal(&mut self.macros, &self.cfg, p, ctx)
             }
-            Event::BlsPartialReceived(_) | Event::SubnetAggregateReceived(_) => {
-                // TODO(plan 03c): adaptive aggregation.
-                Ok(Actions::new())
+            Event::BlsPartialReceived(bp) => {
+                crate::macro_fin::on_bls_partial(&mut self.macros, &self.cfg, bp, ctx)
             }
-            Event::MacroQcReceived(_) => Ok(Actions::new()),
+            Event::SubnetAggregateReceived(_) => Ok(Actions::new()),
+            Event::MacroQcReceived(qc) => {
+                crate::macro_fin::on_macro_qc_received(&mut self.macros, qc, ctx)
+            }
             Event::ValidatorSetUpdated { .. } => Ok(Actions::new()),
-            Event::SlashEvidenceFound(_) => {
-                // TODO(plan 03d): slashing evidence validation + EmitSlashEvidence.
-                Ok(Actions::new())
-            }
+            Event::SlashEvidenceFound(_) => Ok(Actions::new()),
         }
     }
 }
@@ -93,7 +106,7 @@ mod tests {
 
     #[test]
     fn step_returns_empty_for_unknown_timer() {
-        let mut sm = StateMachine::new(Config::default_table_17_1());
+        let mut sm = StateMachine::new(Config::default_table_17_1(), ValidatorId::default());
         let ctx = test_host_context();
         let actions = sm.step(Event::TimerFired(TimerId(0)), &ctx).unwrap();
         assert!(actions.is_empty());
@@ -101,7 +114,7 @@ mod tests {
 
     #[test]
     fn step_is_total_over_event_enum() {
-        let mut sm = StateMachine::new(Config::default_table_17_1());
+        let mut sm = StateMachine::new(Config::default_table_17_1(), ValidatorId::default());
         let ctx = test_host_context();
         sm.step(Event::TimerFired(TimerId(0)), &ctx).unwrap();
     }

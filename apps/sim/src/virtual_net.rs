@@ -146,29 +146,34 @@ impl VirtualNet {
         now: u64,
         rng: &mut ChaCha20Rng,
     ) {
-        if let Action::BroadcastMicroQc(qc) = action {
-            for recipient in 0..validator_count {
-                if recipient == sender {
-                    continue;
-                }
-                if !self.allows_delivery(sender, recipient) {
-                    continue;
-                }
-                let deliver_at = now
-                    .saturating_add(self.conditions.base_delay_ns)
-                    .saturating_add(jitter_nanos(rng, self.conditions.max_delay_ns));
-                let msg = InFlight {
-                    recipient,
-                    event: Event::MicroQcAssembled(qc.clone()),
-                    deliver_at,
-                };
-                let (maybe, duplicate) = self.conditions.perturb(rng, msg);
-                if let Some(m) = maybe {
-                    self.enqueue(m);
-                }
-                if let Some(d) = duplicate {
-                    self.enqueue(d);
-                }
+        let event = match action {
+            Action::BroadcastMicroQc(qc) => Event::MicroQcAssembled(qc.clone()),
+            Action::BroadcastMacroProposal(p) => Event::MacroProposalReceived(p.clone()),
+            Action::BroadcastBlsPartial(bp) => Event::BlsPartialReceived(bp.clone()),
+            Action::BroadcastMacroQc(qc) => Event::MacroQcReceived(qc.clone()),
+            _ => return,
+        };
+        for recipient in 0..validator_count {
+            if recipient == sender {
+                continue;
+            }
+            if !self.allows_delivery(sender, recipient) {
+                continue;
+            }
+            let deliver_at = now
+                .saturating_add(self.conditions.base_delay_ns)
+                .saturating_add(jitter_nanos(rng, self.conditions.max_delay_ns));
+            let msg = InFlight {
+                recipient,
+                event: event.clone(),
+                deliver_at,
+            };
+            let (maybe, duplicate) = self.conditions.perturb(rng, msg);
+            if let Some(m) = maybe {
+                self.enqueue(m);
+            }
+            if let Some(d) = duplicate {
+                self.enqueue(d);
             }
         }
     }
@@ -272,5 +277,60 @@ mod tests {
         assert!(p.allows(0, 1));
         net.heal_partition();
         assert!(!net.partition_active());
+    }
+
+    #[test]
+    fn enqueue_macro_proposal_fans_to_every_other_validator() {
+        use types::macros::{MacroCheckpoint, MacroProposal};
+        use types::primitives::{Epoch, Height};
+        let mut net = VirtualNet::new();
+        let mut rng = ChaCha20Rng::from_seed([2; 32]);
+        let cp = MacroCheckpoint {
+            height: Height(0),
+            epoch: Epoch(0),
+            parent: Hash32::zero(),
+            micro_root: Hash32([0xAB; 32]),
+            hash: Hash32([0xCD; 32]),
+        };
+        let proposal = MacroProposal {
+            checkpoint: cp,
+            proposer: types::primitives::ValidatorId([0; 32]),
+            vrf_proof: types::crypto_types::VrfProof::zero(),
+            proposer_sig: types::crypto_types::BlsSig([0; 96]),
+        };
+        net.enqueue_from_action(0, &Action::BroadcastMacroProposal(proposal), 4, 0, &mut rng);
+        assert_eq!(net.len(), 3, "delivered to recipients 1, 2, 3");
+    }
+
+    #[test]
+    fn enqueue_macro_qc_fans_out() {
+        use types::macros::{AggregationMode, MacroQc};
+        let mut net = VirtualNet::new();
+        let mut rng = ChaCha20Rng::from_seed([3; 32]);
+        let qc = MacroQc {
+            checkpoint_hash: Hash32([0xAB; 32]),
+            mode: AggregationMode::Mode0Flat,
+            agg: BlsAggSig {
+                sig: BlsSig([0xCD; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        net.enqueue_from_action(0, &Action::BroadcastMacroQc(qc), 4, 0, &mut rng);
+        assert_eq!(net.len(), 3);
+    }
+
+    #[test]
+    fn enqueue_bls_partial_fans_out() {
+        use consensus::event::{BlsPartial, SubnetId};
+        let mut net = VirtualNet::new();
+        let mut rng = ChaCha20Rng::from_seed([4; 32]);
+        let bp = BlsPartial {
+            subnet: SubnetId(0),
+            validator: types::primitives::ValidatorId([0; 32]),
+            checkpoint_hash: Hash32([0xAB; 32]),
+            sig: BlsSig([0; 96]),
+        };
+        net.enqueue_from_action(0, &Action::BroadcastBlsPartial(bp), 4, 0, &mut rng);
+        assert_eq!(net.len(), 3);
     }
 }

@@ -12,7 +12,7 @@ fn happy_path_runs_and_replays_bit_identical() {
     };
     let report = sim::scenarios::dispatch(&args).unwrap();
     assert_eq!(report.validators, 4);
-    assert_eq!(report.rounds, 16);
+    assert_eq!(report.rounds, 96);
     assert!(report.safety_ok);
     assert!(report.liveness_ok);
     sim::replay::assert_deterministic(&args).unwrap();

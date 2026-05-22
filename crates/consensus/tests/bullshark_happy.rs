@@ -236,7 +236,7 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
     };
-    let mut sm = StateMachine::new(cfg.clone());
+    let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
     let v = DagView::vertices_at_round(&dag, trigger_round)
         .unwrap()
@@ -267,7 +267,7 @@ fn micro_qc_assembled_twice_is_idempotent() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
     };
-    let mut sm = StateMachine::new(cfg.clone());
+    let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
     let v = DagView::vertices_at_round(&dag, trigger_round)
         .unwrap()

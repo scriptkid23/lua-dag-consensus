@@ -7,13 +7,13 @@ use consensus::{
     ports::{Clock, DagView, Persistence, RandomnessBeacon, ValidatorSetPort},
 };
 use types::{
-    crypto_types::{BlsAggSig, BlsSig, Hash32, VrfProof},
+    crypto_types::{BlsAggSig, BlsPubkey, BlsSig, Hash32, VrfProof},
     dag::{CertifiedVertex, Vertex},
     macros::{AggregationMode, MacroCheckpoint, MacroProposal, MacroQc},
     micro::MicroQc,
     primitives::{Epoch, Height, Round, StakeWeight, ValidatorId},
     slashing::{DoubleVote, SlashEvidence},
-    validator::ValidatorSet,
+    validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet},
 };
 
 struct EmptyDag;
@@ -33,10 +33,29 @@ impl RandomnessBeacon for FixedBeacon {
     }
 }
 
-struct EmptyValset;
-impl ValidatorSetPort for EmptyValset {
+struct MinimalValset;
+impl ValidatorSetPort for MinimalValset {
     fn set_for(&self, _epoch: Epoch) -> consensus::Result<Option<ValidatorSet>> {
-        Ok(None)
+        Ok(Some(ValidatorSet {
+            epoch: Epoch(0),
+            entries: (0u32..4)
+                .map(|i| {
+                    let mut id = [0u8; 32];
+                    id[..4].copy_from_slice(&i.to_be_bytes());
+                    ValidatorEntry {
+                        id: ValidatorId(id),
+                        bls_pubkey: BlsPubkey([0; 48]),
+                        stake: StakeWeight(1),
+                        identity: ValidatorIdentity {
+                            asn: None,
+                            cloud: None,
+                            region: None,
+                        },
+                    }
+                })
+                .collect(),
+            total_stake: StakeWeight(4),
+        }))
     }
     fn index_of(&self, _epoch: Epoch, _validator: &ValidatorId) -> consensus::Result<Option<u32>> {
         Ok(None)
@@ -78,7 +97,7 @@ impl Clock for TestClock {
 fn test_host_context() -> HostContext<'static> {
     static DAG: EmptyDag = EmptyDag;
     static CLOCK: TestClock = TestClock;
-    static VALSET: EmptyValset = EmptyValset;
+    static VALSET: MinimalValset = MinimalValset;
     static BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
     static PERSIST: NoopPersistence = NoopPersistence;
     HostContext {
@@ -129,7 +148,7 @@ fn fixture_macro_qc() -> MacroQc {
 
 #[test]
 fn step_returns_empty_for_non_l2_events_with_empty_dag() {
-    let mut sm = StateMachine::new(Config::default_table_17_1());
+    let mut sm = StateMachine::new(Config::default_table_17_1(), ValidatorId::default());
     let ctx = test_host_context();
     let events = [
         Event::CertifiedVertexReceived(fixture_certified()),
@@ -185,7 +204,7 @@ fn step_returns_empty_for_non_l2_events_with_empty_dag() {
 
 #[test]
 fn step_is_total_over_event_enum() {
-    let mut sm = StateMachine::new(Config::default_table_17_1());
+    let mut sm = StateMachine::new(Config::default_table_17_1(), ValidatorId::default());
     let ctx = test_host_context();
     sm.step(Event::TimerFired(TimerId(0)), &ctx).unwrap();
 }

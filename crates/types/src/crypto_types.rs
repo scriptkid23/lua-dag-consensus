@@ -98,6 +98,14 @@ pub struct Pop(pub BlsSig);
 #[derive(Clone, Copy, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
 pub struct VrfProof(pub [u8; 80]);
 
+impl VrfProof {
+    /// All-zero proof; placeholder until real ECVRF sortition lands in 03c-2.
+    #[must_use]
+    pub const fn zero() -> Self {
+        Self([0; 80])
+    }
+}
+
 /// 256-bit hash (Blake3 unless otherwise documented at the call site).
 #[derive(
     Clone,

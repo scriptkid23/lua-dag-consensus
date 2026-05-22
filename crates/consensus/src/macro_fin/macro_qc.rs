@@ -1,30 +1,125 @@
-//! Macro QC assembly (mode-aware).
+//! Mode 0 flat MacroQc aggregation (L3 03c-1).
 
-use types::{crypto_types::Hash32, macros::MacroQc};
+use std::collections::BTreeSet;
 
-use crate::{config::Config, error::Result};
+use types::{
+    crypto_types::{BlsAggSig, BlsSig, Hash32},
+    macros::{AggregationMode, MacroQc},
+    primitives::ValidatorId,
+    validator::ValidatorSet,
+};
 
-/// Builder that collects per-validator (or per-subnet) signatures and
-/// emits a `MacroQc` once the stake threshold is reached.
+/// **Deprecated skeleton** — kept so existing re-exports continue to compile.
 #[derive(Debug)]
-pub struct MacroQcAssembler<'a> {
-    /// Active config (mode thresholds, etc.).
-    pub config: &'a Config,
-    /// Checkpoint hash being attested.
-    pub target: Hash32,
+pub struct MacroQcAssembler;
+
+impl MacroQcAssembler {
+    /// Skeleton retained for backward-compat.
+    #[must_use]
+    pub fn placeholder() -> Self {
+        Self
+    }
 }
 
-impl<'a> MacroQcAssembler<'a> {
-    /// Construct.
-    #[must_use]
-    pub fn new(config: &'a Config, target: Hash32) -> Self {
-        Self { config, target }
+/// Build a `MacroQc` in `AggregationMode::Mode0Flat` once the signer set
+/// reaches ≥ `2f + 1` distinct validators (equal-stake sim assumption).
+///
+/// Returns `None` below threshold so callers stay idempotent across
+/// repeated `BlsPartialReceived` events.
+///
+/// Bitmap layout: one bit per `ValidatorEntry` in declared order
+/// (`bitmap[i / 8] |= 1 << (i % 8)` when `entries[i].id ∈ signers`).
+/// Aggregate signature is the fixture `[0xCD; 96]` (real BLS aggregate
+/// arrives in plan 03d).
+#[must_use]
+pub fn try_finalize_mode0(
+    target: Hash32,
+    signers: &BTreeSet<ValidatorId>,
+    set: &ValidatorSet,
+) -> Option<MacroQc> {
+    let n = set.entries.len();
+    if n == 0 {
+        return None;
+    }
+    let f = (n - 1) / 3;
+    let need = 2 * f + 1;
+    if signers.len() < need {
+        return None;
+    }
+    let mut bitmap = vec![0u8; n.div_ceil(8)];
+    for (i, entry) in set.entries.iter().enumerate() {
+        if signers.contains(&entry.id) {
+            bitmap[i / 8] |= 1 << (i % 8);
+        }
+    }
+    Some(MacroQc {
+        checkpoint_hash: target,
+        mode: AggregationMode::Mode0Flat,
+        agg: BlsAggSig {
+            sig: BlsSig([0xCD; 96]),
+            bitmap,
+        },
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use types::{
+        crypto_types::BlsPubkey,
+        primitives::{Epoch, StakeWeight},
+        validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet as VSet},
+    };
+
+    fn vset(n: u32) -> VSet {
+        let entries = (0..n)
+            .map(|i| {
+                let mut id = [0u8; 32];
+                id[..4].copy_from_slice(&i.to_be_bytes());
+                ValidatorEntry {
+                    id: ValidatorId(id),
+                    bls_pubkey: BlsPubkey([0; 48]),
+                    stake: StakeWeight(1),
+                    identity: ValidatorIdentity {
+                        asn: None,
+                        cloud: None,
+                        region: None,
+                    },
+                }
+            })
+            .collect();
+        VSet {
+            epoch: Epoch(0),
+            entries,
+            total_stake: StakeWeight(u64::from(n)),
+        }
     }
 
-    /// Skeleton: never finalizes. Plan 03c implements the modes.
-    pub fn try_finalize(&self) -> Result<Option<MacroQc>> {
-        let _ = self.config;
-        let _ = self.target;
-        Ok(None)
+    fn signers(set: &VSet, count: usize) -> BTreeSet<ValidatorId> {
+        set.entries.iter().take(count).map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn below_threshold_returns_none() {
+        let set = vset(4);
+        let s = signers(&set, 2);
+        assert!(try_finalize_mode0(Hash32([1; 32]), &s, &set).is_none());
+    }
+
+    #[test]
+    fn at_exactly_threshold_returns_some_with_correct_bitmap() {
+        let set = vset(4);
+        let s = signers(&set, 3);
+        let qc = try_finalize_mode0(Hash32([1; 32]), &s, &set).expect("threshold met");
+        assert_eq!(qc.mode, AggregationMode::Mode0Flat);
+        assert_eq!(qc.agg.bitmap, vec![0b0000_0111]);
+        assert_eq!(qc.agg.sig.0, [0xCD; 96]);
+    }
+
+    #[test]
+    fn empty_validator_set_returns_none() {
+        let set = vset(0);
+        let s = BTreeSet::new();
+        assert!(try_finalize_mode0(Hash32([1; 32]), &s, &set).is_none());
     }
 }
