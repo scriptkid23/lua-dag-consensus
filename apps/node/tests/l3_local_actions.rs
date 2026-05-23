@@ -8,6 +8,8 @@ use node::{
     action_applier::ActionApplier,
     devnet_keys::devnet_valset_four,
     host_context::{ChainedBeacon, StubHostBundle},
+    live_dag::LiveDag,
+    observability::metrics::Metrics,
     query::RocksConsensusQuery,
     timer::TimerRegistry,
 };
@@ -27,15 +29,17 @@ fn test_applier() -> (ActionApplier, RocksPersistence) {
         max_total_wal_size_mb: 16,
     })
     .unwrap());
-    let persistence = RocksPersistence::new(db);
+    let persistence = RocksPersistence::new(Arc::clone(&db));
     let (timer_tx, _timer_rx) = mpsc::channel(8);
     let registry = Arc::new(TimerRegistry::default());
     let beacon = Arc::new(ChainedBeacon::new());
+    let metrics = Arc::new(Metrics::new().unwrap());
     let applier = ActionApplier::new(
         persistence.clone(),
         timer_tx,
         registry,
         beacon,
+        metrics,
     );
     (applier, persistence)
 }
@@ -76,7 +80,17 @@ fn applier_persists_macro_qc_and_checkpoint() {
 #[test]
 fn host_bundle_signer_matches_valset() {
     let valset = devnet_valset_four();
-    let bundle = StubHostBundle::new("node1", valset, None).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        Database::open(&storage::StorageConfig {
+            path: dir.path().to_path_buf(),
+            create_if_missing: true,
+            max_total_wal_size_mb: 16,
+        })
+        .unwrap(),
+    );
+    let dag = Arc::new(LiveDag::new(db));
+    let bundle = StubHostBundle::new("node1", valset, dag, None).unwrap();
     assert!(
         bundle
             .signer

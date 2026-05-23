@@ -1,7 +1,7 @@
 # Design: L3 Crypto & Slashing (03d)
 
 **Date:** 2026-05-22  
-**Status:** Draft (plan-ready)  
+**Status:** Draft (plan-ready); 03d landed; **03d+ inactivity leak landed**; 06b-l3 landed  
 **Audience:** Contributors replacing fixture BLS/VRF and wiring slash detectors  
 **Prerequisite:** [03c-2 landed](../plans/2026-05-22-03c2-l3-full.md) — VRF-equivalent proposer, Modes A/B, sim scenarios green.
 
@@ -26,7 +26,7 @@ Replace **deterministic fixture crypto** on the L3 hot path with **real BLS12-38
 **Non-goals (03d):**
 
 - On-chain slashing execution / stake deduction (penalty math in `slashing/penalty.rs` stays callable but SM does not apply economic state).
-- Inactivity leak **emission** (config + `compute()` exist; wire in 03d+ or 06b).
+- **Inactivity leak emission** — landed in **03d+** (`Action::NotifyInactivityLeak`; see [`2026-05-22-03d-plus-inactivity-leak.md`](../plans/2026-05-22-03d-plus-inactivity-leak.md)).
 - L2 micro QC real BLS (optional stretch — macro path is P0).
 - Production node key management / HSM (**06b-l3**).
 - L4 BTC anchor, DKG ceremony.

@@ -17,6 +17,7 @@ use crate::{
     config::NodeConfig,
     devnet_keys::validator_id_from_label,
     host_context::{ChainedBeacon, StubHostBundle},
+    live_dag::LiveDag,
     observability::{health, metrics::Metrics, tracing as tracing_init},
     orchestrator::Orchestrator,
     query::RocksConsensusQuery,
@@ -56,7 +57,7 @@ fn resolve_valset_path(config_dir: &Path, path: &Path) -> PathBuf {
 async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     info!(target: "node", "starting LUA-DAG node");
 
-    // L3 host wiring complete in 06b-l3; L1 ingress still skeleton.
+    // L3 host wiring complete in 06b-l3; L1 ingress via gossip (06b-L1).
     if cfg.node.network_mode == "live"
         && !args.allow_skeleton_network
         && !cfg.node.l3_wire_complete
@@ -79,9 +80,11 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
 
     // Storage.
     let db = Arc::new(Database::open(&cfg.storage)?);
-    let persistence = RocksPersistence::new(db);
+    let persistence = RocksPersistence::new(Arc::clone(&db));
+    let live_dag = Arc::new(LiveDag::new(db));
 
-    // Consensus.
+    // Observability.
+    let metrics = Arc::new(Metrics::new()?);
     let sm: StateMachine = StateMachine::new(cfg.consensus.clone(), self_id);
     let _clock = TokioClock::new();
 
@@ -106,20 +109,23 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         }
     });
 
-    let host_bundle = StubHostBundle::new(&cfg.node.identity.label, valset.clone(), None)
-        .context("build host context bundle")?;
+    let host_bundle = StubHostBundle::new(
+        &cfg.node.identity.label,
+        valset.clone(),
+        Arc::clone(&live_dag),
+        None,
+    )
+    .context("build host context bundle")?;
     let beacon: Arc<ChainedBeacon> = Arc::clone(&host_bundle.beacon);
     let action_applier = ActionApplier::new(
         persistence.clone(),
         timer_schedule_tx,
         timer_registry,
         beacon,
+        metrics.clone(),
     );
 
-    // Observability.
-    let metrics = Arc::new(Metrics::new()?);
-
-    // Shutdown plumbing.
+    // Consensus SM (after host ports are ready).
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // ─── Live swarm ────────────────────────────────────────────────────

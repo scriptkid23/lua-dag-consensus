@@ -77,14 +77,20 @@ fn vrf_seed_for(label: &str, key_file: bool, ikm: &[u8; 32]) -> [u8; 32] {
     }
 }
 
-fn build_signer(ikm: [u8; 32], vrf_seed: [u8; 32]) -> Result<Self> {
+fn build_signer(ikm: [u8; 32], vrf_seed: [u8; 32]) -> Result<DevSigner> {
     let bls = SecretKey::from_ikm(&ikm).map_err(|_| {
         consensus::Error::InvalidConfig("invalid dev BLS key material".into())
     })?;
-    Ok(Self {
+    Ok(DevSigner {
         bls,
         vrf: VrfKey::from_seed(&vrf_seed),
     })
+}
+
+impl std::fmt::Debug for DevSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DevSigner").finish_non_exhaustive()
+    }
 }
 
 fn decode_ikm(hex: &str) -> Result<[u8; 32]> {

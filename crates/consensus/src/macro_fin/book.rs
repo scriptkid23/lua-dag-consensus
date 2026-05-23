@@ -63,6 +63,10 @@ pub struct MacroBook {
     pub(crate) proposals_seen: HashMap<(Height, ValidatorId), Vec<MacroProposal>>,
     /// Invalid crypto events dropped on receive.
     pub(crate) rejected_crypto: u64,
+    /// Consecutive macro windows adopted without local finalization.
+    pub(crate) unfinalized_windows: u32,
+    /// Whether `NotifyInactivityLeak` was already emitted for the current streak.
+    pub(crate) leak_notified: bool,
 }
 
 impl MacroBook {
@@ -91,6 +95,8 @@ impl MacroBook {
             partial_sigs: HashMap::new(),
             proposals_seen: HashMap::new(),
             rejected_crypto: 0,
+            unfinalized_windows: 0,
+            leak_notified: false,
         }
     }
 

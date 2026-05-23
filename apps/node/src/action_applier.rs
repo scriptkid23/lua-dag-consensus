@@ -2,12 +2,16 @@
 
 use std::sync::Arc;
 
-use consensus::action::Action;
+use consensus::{action::Action, ports::Persistence};
 use storage::RocksPersistence;
 use tokio::sync::mpsc;
-use tracing::debug;
+use tracing::{debug, info};
 
-use crate::{host_context::ChainedBeacon, timer::TimerRegistry};
+use crate::{
+    host_context::ChainedBeacon,
+    observability::metrics::Metrics,
+    timer::TimerRegistry,
+};
 
 /// Applies host-local actions: Rocks persistence, timers, beacon chain, blob status.
 pub struct ActionApplier {
@@ -15,6 +19,7 @@ pub struct ActionApplier {
     timer_schedule_tx: mpsc::Sender<(consensus::event::TimerId, u128)>,
     timer_registry: Arc<TimerRegistry>,
     beacon: Arc<ChainedBeacon>,
+    metrics: Arc<Metrics>,
 }
 
 impl ActionApplier {
@@ -25,12 +30,14 @@ impl ActionApplier {
         timer_schedule_tx: mpsc::Sender<(consensus::event::TimerId, u128)>,
         timer_registry: Arc<TimerRegistry>,
         beacon: Arc<ChainedBeacon>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             persistence,
             timer_schedule_tx,
             timer_registry,
             beacon,
+            metrics,
         }
     }
 
@@ -60,12 +67,23 @@ impl ActionApplier {
                 self.timer_registry.cancel(*id);
             }
             Action::UpdateBlobStatus { blob, status } => {
-                // Blob status column lands with L4; metrics-only stub for now.
                 debug!(
                     target: "node::action_applier",
                     ?blob,
                     ?status,
                     "UpdateBlobStatus (not persisted yet)"
+                );
+            }
+            Action::NotifyInactivityLeak {
+                windows,
+                bps_per_window,
+            } => {
+                self.metrics.inactivity_leak_emitted.inc();
+                info!(
+                    target: "node::action_applier",
+                    windows,
+                    bps_per_window,
+                    "NotifyInactivityLeak"
                 );
             }
             _ => {}

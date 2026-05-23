@@ -27,7 +27,7 @@ use smallvec::SmallVec;
 use types::{
     crypto_types::Hash32,
     macros::{AggregationMode, MacroCheckpoint, MacroProposal, MacroQc},
-    primitives::{BlobId, Epoch, Height},
+    primitives::{BlobId, Epoch, Height, ValidatorId},
     validator::ValidatorSet,
 };
 
@@ -94,6 +94,28 @@ fn bump_reputation(book: &mut MacroBook, cfg: &Config, signers: &BTreeSet<types:
     }
 }
 
+fn note_inactivity_leak_on_adoption(
+    book: &mut MacroBook,
+    cfg: &Config,
+    actions: &mut Actions,
+    finalized_this_step: bool,
+) {
+    if finalized_this_step {
+        book.unfinalized_windows = 0;
+        book.leak_notified = false;
+        return;
+    }
+    book.unfinalized_windows = book.unfinalized_windows.saturating_add(1);
+    let (bps, apply) = crate::slashing::inactivity_leak::compute(cfg, book.unfinalized_windows);
+    if apply && !book.leak_notified {
+        book.leak_notified = true;
+        actions.push(Action::NotifyInactivityLeak {
+            windows: book.unfinalized_windows,
+            bps_per_window: bps,
+        });
+    }
+}
+
 fn finish_macro_qc_adoption(
     book: &mut MacroBook,
     cfg: &Config,
@@ -119,6 +141,8 @@ fn finish_macro_qc_adoption(
         blob: blob_id_of_checkpoint(&candidate),
         status: crate::api::tier::BlobStatus::Justified,
     });
+    let finalized_this_step = book.two_chain.newly_finalized_height().is_some();
+    note_inactivity_leak_on_adoption(book, cfg, &mut actions, finalized_this_step);
     if let Some(prev) = book.two_chain.newly_finalized_height() {
         book.two_chain.mark_finalized(prev);
         if let Some(prev_cp) = book.candidate.get(&prev).cloned() {
@@ -129,6 +153,32 @@ fn finish_macro_qc_adoption(
         }
     }
     actions
+}
+
+/// Sim/CLI probe: broken-parent macro streak emits leak after four justified windows.
+#[must_use]
+pub fn probe_inactivity_leak_streak(cfg: &Config) -> bool {
+    let mut book = MacroBook::new(ValidatorId([0; 32]));
+    let mut actions = Actions::new();
+    for i in 0..4u64 {
+        let height = Height(i);
+        let parent = if i == 0 {
+            Hash32::zero()
+        } else {
+            Hash32([0x99; 32])
+        };
+        let cp = checkpoint::build(height, Epoch(0), parent, Hash32([i as u8 + 1; 32]));
+        book.candidate.insert(height, cp.clone());
+        book.two_chain.adopt(cp);
+        let finalized = book.two_chain.newly_finalized_height().is_some();
+        note_inactivity_leak_on_adoption(&mut book, cfg, &mut actions, finalized);
+        if let Some(prev) = book.two_chain.newly_finalized_height() {
+            book.two_chain.mark_finalized(prev);
+        }
+    }
+    actions
+        .iter()
+        .any(|a| matches!(a, Action::NotifyInactivityLeak { .. }))
 }
 
 fn try_emit_mode_a_qc(
@@ -589,6 +639,8 @@ pub fn on_macro_qc_received(
         blob: blob_id_of_checkpoint(&candidate),
         status: crate::api::tier::BlobStatus::Justified,
     });
+    let finalized_this_step = book.two_chain.newly_finalized_height().is_some();
+    note_inactivity_leak_on_adoption(book, cfg, &mut actions, finalized_this_step);
     if let Some(prev) = book.two_chain.newly_finalized_height() {
         book.two_chain.mark_finalized(prev);
         if let Some(prev_cp) = book.candidate.get(&prev).cloned() {
@@ -1276,5 +1328,56 @@ mod tests {
         };
         let actions = on_macro_qc_received(&mut book, &cfg, qc, &ctx).unwrap();
         assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn inactivity_leak_emits_after_four_unfinalized_windows() {
+        let cfg = Config::default_table_17_1();
+        let mut book = MacroBook::new(ValidatorId([0; 32]));
+        let mut actions = Actions::new();
+
+        for i in 0..4u64 {
+            let height = Height(i);
+            let parent = if i == 0 {
+                Hash32::zero()
+            } else {
+                Hash32([0x99; 32])
+            };
+            let cp = checkpoint::build(height, Epoch(0), parent, Hash32([i as u8 + 1; 32]));
+            book.candidate.insert(height, cp.clone());
+            book.two_chain.adopt(cp);
+            let finalized = book.two_chain.newly_finalized_height().is_some();
+            note_inactivity_leak_on_adoption(&mut book, &cfg, &mut actions, finalized);
+            if let Some(prev) = book.two_chain.newly_finalized_height() {
+                book.two_chain.mark_finalized(prev);
+            }
+        }
+
+        let leaks: Vec<_> = actions
+            .iter()
+            .filter(|a| matches!(a, Action::NotifyInactivityLeak { .. }))
+            .collect();
+        assert_eq!(leaks.len(), 1);
+        assert!(matches!(
+            leaks[0],
+            Action::NotifyInactivityLeak {
+                windows: 4,
+                bps_per_window: 50,
+            }
+        ));
+    }
+
+    #[test]
+    fn inactivity_leak_resets_on_finalization() {
+        let cfg = Config::default_table_17_1();
+        let mut book = MacroBook::new(ValidatorId([0; 32]));
+        let mut actions = Actions::new();
+        book.unfinalized_windows = 4;
+        book.leak_notified = true;
+
+        note_inactivity_leak_on_adoption(&mut book, &cfg, &mut actions, true);
+
+        assert_eq!(book.unfinalized_windows, 0);
+        assert!(!book.leak_notified);
     }
 }

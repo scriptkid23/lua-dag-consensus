@@ -36,6 +36,8 @@ pub enum Scenario {
     ModeASubnet,
     /// Inject an equivocating validator.
     EquivocationInject,
+    /// Four justified macro windows without finalization → leak notification.
+    InactivityLeak,
     /// Byzantine split-brain scenario.
     ByzantineSplit,
     /// Network partition + healing.

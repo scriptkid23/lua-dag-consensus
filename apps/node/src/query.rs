@@ -3,6 +3,7 @@
 use consensus::{
     Result,
     api::{query::ConsensusQuery, tier::BlobStatus},
+    ports::Persistence,
 };
 use storage::RocksPersistence;
 use types::{

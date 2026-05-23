@@ -1,4 +1,4 @@
-//! Production [`consensus::HostContext`] wiring for L3 (plan 06b-l3).
+//! Production [`consensus::HostContext`] wiring (plans 06b-l3 / 06b-L1).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -8,32 +8,22 @@ use consensus::{
     Result,
     host_context::HostContext,
     leader::beacon::chain_beacon,
-    ports::{DagView, RandomnessBeacon, ValidatorSetPort},
+    ports::{RandomnessBeacon, ValidatorSetPort},
 };
 use storage::RocksPersistence;
 use types::{
     crypto_types::Hash32,
-    dag::CertifiedVertex,
     macros::MacroQc,
-    primitives::{Epoch, Round, ValidatorId},
+    primitives::{Epoch, ValidatorId},
     validator::ValidatorSet,
 };
 
-use crate::{devnet_keys::validator_id_from_label, signer::DevSigner, timer::TokioClock};
-
-/// Empty DAG — no vertices until L1 ingress (plan 06b-L1).
-#[derive(Debug, Default)]
-pub struct EmptyDag;
-
-impl DagView for EmptyDag {
-    fn vertex(&self, _hash: &Hash32) -> Result<Option<CertifiedVertex>> {
-        Ok(None)
-    }
-
-    fn vertices_at_round(&self, _round: Round) -> Result<Vec<CertifiedVertex>> {
-        Ok(vec![])
-    }
-}
+use crate::{
+    devnet_keys::validator_id_from_label,
+    live_dag::LiveDag,
+    signer::DevSigner,
+    timer::TokioClock,
+};
 
 /// Beacon chained on each locally persisted macro QC (mirrors sim).
 #[derive(Debug)]
@@ -105,11 +95,11 @@ impl ValidatorSetPort for CachedValidatorSet {
     }
 }
 
-/// Owned port stubs reused across orchestrator steps.
+/// Owned host ports reused across orchestrator steps.
 #[derive(Debug)]
 pub struct StubHostBundle {
-    /// Empty DAG until L1 adapter lands.
-    pub dag: EmptyDag,
+    /// Live L1 DAG (gossip ingress + Rocks vertex column).
+    pub dag: Arc<LiveDag>,
     /// Process clock.
     pub clock: TokioClock,
     /// Genesis / loaded validator set.
@@ -125,21 +115,23 @@ impl StubHostBundle {
     pub fn new(
         label: &str,
         valset: ValidatorSet,
+        dag: Arc<LiveDag>,
         signer_key_path: Option<&Path>,
     ) -> AnyhowResult<Self> {
         let self_id = validator_id_from_label(label);
-        let entry = valset
+        let bls_pubkey = valset
             .entries
             .iter()
             .find(|e| e.id == self_id)
-            .with_context(|| format!("self_id {self_id} not found in validator set"))?;
+            .with_context(|| format!("self_id {self_id} not found in validator set"))?
+            .bls_pubkey;
         let beacon = Arc::new(ChainedBeacon::new());
         Ok(Self {
-            dag: EmptyDag,
+            dag,
             clock: TokioClock::new(),
             valset: CachedValidatorSet::new(valset),
             beacon,
-            signer: DevSigner::load_for_label(label, &entry.bls_pubkey, signer_key_path)?,
+            signer: DevSigner::load_for_label(label, &bls_pubkey, signer_key_path)?,
         })
     }
 }
@@ -151,7 +143,7 @@ pub fn build_host_context<'a>(
     persistence: &'a RocksPersistence,
 ) -> HostContext<'a> {
     HostContext {
-        dag: &bundle.dag,
+        dag: &*bundle.dag,
         clock: &bundle.clock,
         valset: &bundle.valset,
         beacon: &*bundle.beacon,

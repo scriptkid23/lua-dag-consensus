@@ -60,6 +60,8 @@ pub struct World {
     pub suppress_macro_proposer: Option<ValidatorId>,
     /// Deterministic BLS/VRF keys aligned with validator indices.
     key_ring: ValidatorKeyRing,
+    /// Count of `NotifyInactivityLeak` actions applied across all validators.
+    inactivity_leak_emitted: u32,
 }
 
 impl World {
@@ -113,6 +115,7 @@ impl World {
             macro_qc_beacon_chained: HashSet::new(),
             suppress_macro_proposer: None,
             key_ring,
+            inactivity_leak_emitted: 0,
         }
     }
 
@@ -186,6 +189,12 @@ impl World {
     /// Count slash evidence entries across all validators.
     pub fn slash_evidence_count(&self) -> usize {
         self.persistence.iter().map(|p| p.slash_count()).sum()
+    }
+
+    /// Count inactivity leak notifications emitted during the run.
+    #[must_use]
+    pub fn inactivity_leak_count(&self) -> u32 {
+        self.inactivity_leak_emitted
     }
 
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
@@ -305,6 +314,12 @@ impl World {
                         now,
                         &mut self.rng,
                     );
+                }
+                Action::NotifyInactivityLeak {
+                    windows: _,
+                    bps_per_window: _,
+                } => {
+                    self.inactivity_leak_emitted += 1;
                 }
             }
         }

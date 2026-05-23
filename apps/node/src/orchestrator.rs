@@ -68,6 +68,16 @@ impl Orchestrator {
                 maybe_event = self.events_rx.recv() => {
                     let Some(event) = maybe_event else { break };
                     self.metrics.events_processed.inc();
+                    if let Event::CertifiedVertexReceived(cv) = &event {
+                        if let Err(e) = self.host_bundle.dag.ingest(cv.clone()) {
+                            warn!(
+                                target: "node::orchestrator",
+                                error = %e,
+                                "failed to ingest certified vertex"
+                            );
+                            continue;
+                        }
+                    }
                     let ctx = crate::host_context::build_host_context(
                         &self.host_bundle,
                         &self.persistence,

@@ -102,7 +102,8 @@ impl Bridge {
             Action::PersistMacroQc(_)
             | Action::PersistMacroCheckpoint(_)
             | Action::EmitSlashEvidence { .. }
-            | Action::UpdateBlobStatus { .. } => {
+            | Action::UpdateBlobStatus { .. }
+            | Action::NotifyInactivityLeak { .. } => {
                 // Storage / API — not a network concern.
                 Ok(())
             }
@@ -128,6 +129,11 @@ mod tests {
         Bridge::translate_action(&Action::UpdateBlobStatus {
             blob: BlobId([0; 32]),
             status: BlobStatus::Accepted,
+        })
+        .unwrap();
+        Bridge::translate_action(&Action::NotifyInactivityLeak {
+            windows: 4,
+            bps_per_window: 50,
         })
         .unwrap();
     }

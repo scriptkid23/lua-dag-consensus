@@ -2,7 +2,7 @@
 
 use consensus::macro_fin::vote_book::VoteRecord;
 use types::{
-    crypto_types::Hash32,
+    crypto_types::{BlsSig, Hash32},
     primitives::{Epoch, ValidatorId},
 };
 
@@ -13,16 +13,17 @@ use crate::{
     keys,
 };
 
-const VOTE_RECORD_LEN: usize = 8 + 8 + 32;
+const VOTE_RECORD_LEN: usize = 8 + 8 + 32 + 96;
 
 /// Store a vote record keyed by `(validator, target_epoch)`.
 pub fn put(db: &Database, validator: &ValidatorId, record: &VoteRecord) -> Result<()> {
     let key = keys::votebook(validator, record.target);
-    // VoteRecord does not derive Borsh — encode the three fields manually.
+    // VoteRecord does not derive Borsh — encode the four fields manually.
     let mut bytes = Vec::with_capacity(VOTE_RECORD_LEN);
     bytes.extend_from_slice(&record.source.0.to_be_bytes());
     bytes.extend_from_slice(&record.target.0.to_be_bytes());
     bytes.extend_from_slice(record.checkpoint.as_bytes());
+    bytes.extend_from_slice(&record.sig.0);
     db.put_raw(ColumnFamily::VoteBook, &key, &bytes)
 }
 
@@ -43,9 +44,12 @@ pub fn get(
     let target = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
     let mut checkpoint = [0u8; 32];
     checkpoint.copy_from_slice(&bytes[16..48]);
+    let mut sig = [0u8; 96];
+    sig.copy_from_slice(&bytes[48..144]);
     Ok(Some(VoteRecord {
         source: Epoch(source),
         target: Epoch(target),
         checkpoint: Hash32(checkpoint),
+        sig: BlsSig(sig),
     }))
 }

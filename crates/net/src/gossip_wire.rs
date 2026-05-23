@@ -9,6 +9,7 @@
 
 use consensus::action::Action;
 use consensus::event::{BlsPartial, Event, SubnetAggregate};
+use types::dag::CertifiedVertex;
 use types::macros::{MacroProposal, MacroQc};
 use types::micro::MicroQc;
 use types::slashing::SlashEvidence;
@@ -36,7 +37,8 @@ pub fn outbound_broadcast(action: &Action) -> Result<Option<(Topic, Vec<u8>)>> {
         | Action::PersistMacroCheckpoint(_)
         | Action::ScheduleTimer { .. }
         | Action::CancelTimer(_)
-        | Action::UpdateBlobStatus { .. } => return Ok(None),
+        | Action::UpdateBlobStatus { .. }
+        | Action::NotifyInactivityLeak { .. } => return Ok(None),
     };
     Ok(Some(pair))
 }
@@ -100,9 +102,10 @@ pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
             }
             Ok(Some(Event::BlsPartialReceived(p)))
         }
-        // Mode-A devnet does not produce CertifiedVertex broadcasts; subscribers
-        // ignore until L1 ingestion lands.
-        Topic::CertifiedVertex => Ok(None),
+        Topic::CertifiedVertex => {
+            let v: CertifiedVertex = decode_event_payload(data)?;
+            Ok(Some(Event::CertifiedVertexReceived(v)))
+        }
     }
 }
 
@@ -159,6 +162,30 @@ mod tests {
     }
 
     #[test]
+    fn certified_vertex_roundtrips_on_wire() {
+        use types::dag::{CertifiedVertex, Vertex};
+        let v = CertifiedVertex {
+            vertex: Vertex {
+                round: types::primitives::Round(5),
+                author: ValidatorId([6; 32]),
+                parents: vec![],
+                blobs: vec![],
+                hash: Hash32([6; 32]),
+            },
+            certificate: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        let bytes = crate::gossip::codec::encode_action_payload(&v).unwrap();
+        let topic = Topic::CertifiedVertex;
+        let ev = inbound_message(&topic.ident().to_string(), &bytes)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ev, Event::CertifiedVertexReceived(got) if got == v));
+    }
+
+    #[test]
     fn timer_action_is_not_broadcast() {
         let action = Action::CancelTimer(TimerId(1));
         assert!(outbound_broadcast(&action).unwrap().is_none());
@@ -166,10 +193,24 @@ mod tests {
     }
 
     #[test]
-    fn certified_vertex_topic_returns_none() {
-        // Subscribed but no Event mapping yet: must not error.
-        let ev = inbound_message(&Topic::CertifiedVertex.wire_name(), &[]).unwrap();
-        assert!(ev.is_none());
+    fn certified_vertex_topic_decodes_to_event() {
+        use types::dag::{CertifiedVertex, Vertex};
+        let v = CertifiedVertex {
+            vertex: Vertex {
+                round: types::primitives::Round(1),
+                author: types::primitives::ValidatorId([1; 32]),
+                parents: vec![],
+                blobs: vec![],
+                hash: Hash32([1; 32]),
+            },
+            certificate: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        let bytes = crate::gossip::codec::encode_action_payload(&v).unwrap();
+        let ev = inbound_message(&Topic::CertifiedVertex.wire_name(), &bytes).unwrap();
+        assert!(matches!(ev, Some(Event::CertifiedVertexReceived(_))));
     }
 
     #[test]

@@ -15,6 +15,8 @@ pub struct Metrics {
     pub events_dropped: IntCounter,
     /// Outbound broadcast actions dropped because the swarm queue was full.
     pub actions_dropped: IntCounter,
+    /// Inactivity leak notifications applied locally.
+    pub inactivity_leak_emitted: IntCounter,
 }
 
 impl Metrics {
@@ -38,15 +40,21 @@ impl Metrics {
             "node_actions_dropped_total",
             "Outbound broadcast actions dropped due to a full swarm queue",
         )?;
+        let inactivity_leak_emitted = IntCounter::new(
+            "node_inactivity_leak_emitted_total",
+            "NotifyInactivityLeak actions applied by the node",
+        )?;
         registry.register(Box::new(actions_dispatched.clone()))?;
         registry.register(Box::new(events_dropped.clone()))?;
         registry.register(Box::new(actions_dropped.clone()))?;
+        registry.register(Box::new(inactivity_leak_emitted.clone()))?;
         Ok(Self {
             registry,
             events_processed,
             actions_dispatched,
             events_dropped,
             actions_dropped,
+            inactivity_leak_emitted,
         })
     }
 

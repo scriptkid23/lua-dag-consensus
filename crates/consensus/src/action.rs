@@ -55,6 +55,13 @@ pub enum Action {
         /// New status.
         status: BlobStatus,
     },
+    /// Host notification: inactivity leak rate applies (not slash evidence).
+    NotifyInactivityLeak {
+        /// Consecutive unfinalized macro windows observed locally.
+        windows: u32,
+        /// Basis-points penalty rate for this window (Table 17.1).
+        bps_per_window: u32,
+    },
 }
 
 #[cfg(test)]
