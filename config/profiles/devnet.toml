@@ -20,6 +20,9 @@ validator_set_path = "config/valsets/devnet-4.toml"
 # L3 node production wiring complete (plan 06b-l3).
 l3_wire_complete = true
 
+# Local L1 vertex producer (plan 06b-L1).
+l1_driver_enabled = true
+
 [net]
 listen = ["/ip4/0.0.0.0/tcp/9000"]
 bootstrap = []

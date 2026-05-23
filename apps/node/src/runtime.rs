@@ -17,6 +17,7 @@ use crate::{
     config::NodeConfig,
     devnet_keys::validator_id_from_label,
     host_context::{ChainedBeacon, StubHostBundle},
+    l1::L1Driver,
     live_dag::LiveDag,
     observability::{health, metrics::Metrics, tracing as tracing_init},
     orchestrator::Orchestrator,
@@ -130,6 +131,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
 
     // ─── Live swarm ────────────────────────────────────────────────────
     let (net_actions_tx, net_actions_rx) = mpsc::channel::<Action>(1024);
+    let mut gossip_publish_tx: Option<mpsc::Sender<(net::gossip::Topic, Vec<u8>)>> = None;
     let (swarm_handle, net_ready_rx) = if args.allow_skeleton_network
         && cfg.node.network_mode != "live"
     {
@@ -148,6 +150,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         let spawn = net::swarm_runner::spawn_gossip_tasks(keypair, net_cfg, net_actions_rx)
             .await
             .context("spawn gossipsub swarm")?;
+        gossip_publish_tx = Some(spawn.publish_tx);
 
         let mut events_rx_swarm = spawn.events_rx;
         let events_tx_for_swarm = events_tx.clone();
@@ -184,6 +187,26 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     )
     .await?;
     rpc_server::serve(&cfg.rpc_listen, query, rpc_shutdown).await?;
+
+    if cfg.node.l1_driver_enabled {
+        let publish_tx = gossip_publish_tx.with_context(|| {
+            "l1_driver_enabled requires a live gossip swarm (not skeleton network mode)"
+        })?;
+        let round_ms = cfg.consensus.timing.round_duration_ms;
+        let driver = L1Driver::new(
+            valset.clone(),
+            cfg.consensus.clone(),
+            Arc::clone(&live_dag),
+            Arc::clone(&host_bundle.beacon),
+            events_tx.clone(),
+            publish_tx,
+            std::time::Duration::from_millis(round_ms),
+        );
+        tokio::spawn(async move {
+            driver.run().await;
+        });
+        info!(target: "node", round_duration_ms = round_ms, "L1 driver started");
+    }
 
     // Orchestrator.
     let orch = Orchestrator::new(

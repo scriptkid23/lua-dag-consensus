@@ -2393,6 +2393,7 @@ dependencies = [
  "crypto",
  "futures",
  "hex",
+ "libp2p",
  "net",
  "prometheus",
  "serde",

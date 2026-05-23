@@ -46,6 +46,9 @@ pub struct NodeSection {
     /// When true, `network_mode=live` no longer requires `--allow-skeleton-network` for L3.
     #[serde(default)]
     pub l3_wire_complete: bool,
+    /// When true, spawn the local L1 certified-vertex driver (plan 06b-L1).
+    #[serde(default)]
+    pub l1_driver_enabled: bool,
 }
 
 fn default_network_mode() -> String {

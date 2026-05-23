@@ -3,7 +3,11 @@
 use std::sync::Arc;
 
 use borsh::to_vec;
-use consensus::action::Action;
+use consensus::{
+    action::Action,
+    api::ConsensusQuery,
+    ports::{Persistence, SignerPort},
+};
 use node::{
     action_applier::ActionApplier,
     devnet_keys::devnet_valset_four,

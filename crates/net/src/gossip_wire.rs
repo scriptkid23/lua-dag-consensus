@@ -43,6 +43,11 @@ pub fn outbound_broadcast(action: &Action) -> Result<Option<(Topic, Vec<u8>)>> {
     Ok(Some(pair))
 }
 
+/// Encode a certified vertex for gossip publish (host L1 driver path).
+pub fn encode_certified_vertex(cv: &CertifiedVertex) -> Result<(Topic, Vec<u8>)> {
+    Ok((Topic::CertifiedVertex, encode_action_payload(cv)?))
+}
+
 /// Returns `true` iff this action would have been published by [`outbound_broadcast`].
 ///
 /// Cheap pre-flight used by the orchestrator to route broadcast actions onto
@@ -179,6 +184,30 @@ mod tests {
         };
         let bytes = crate::gossip::codec::encode_action_payload(&v).unwrap();
         let topic = Topic::CertifiedVertex;
+        let ev = inbound_message(&topic.ident().to_string(), &bytes)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ev, Event::CertifiedVertexReceived(got) if got == v));
+    }
+
+    #[test]
+    fn certified_vertex_encode_for_publish() {
+        use types::dag::{CertifiedVertex, Vertex};
+        let v = CertifiedVertex {
+            vertex: Vertex {
+                round: types::primitives::Round(5),
+                author: ValidatorId([6; 32]),
+                parents: vec![],
+                blobs: vec![],
+                hash: Hash32([6; 32]),
+            },
+            certificate: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        let (topic, bytes) = encode_certified_vertex(&v).unwrap();
+        assert_eq!(topic, Topic::CertifiedVertex);
         let ev = inbound_message(&topic.ident().to_string(), &bytes)
             .unwrap()
             .unwrap();

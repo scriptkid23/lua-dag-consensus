@@ -47,6 +47,8 @@ pub struct GossipSpawn {
     pub local_peer_id: PeerId,
     /// Inbound events decoded from gossip; the orchestrator reads from this.
     pub events_rx: mpsc::Receiver<Event>,
+    /// Pre-encoded gossip payloads from the L1 driver (CertifiedVertex publish path).
+    pub publish_tx: mpsc::Sender<(Topic, Vec<u8>)>,
     /// Readiness signal — flips `true` once every listen addr has bound.
     pub ready: watch::Receiver<bool>,
     /// Snapshot of every `NewListenAddr` the swarm has reported. Useful for
@@ -129,6 +131,7 @@ pub async fn spawn_gossip_tasks(
     }
 
     let (events_tx, events_rx) = mpsc::channel::<Event>(EVENT_BUFFER);
+    let (publish_tx, mut publish_rx) = mpsc::channel::<(Topic, Vec<u8>)>(EVENT_BUFFER);
     let (ready_tx, ready_rx) = watch::channel(false);
     let (listen_tx, listen_rx) = watch::channel(Vec::<Multiaddr>::new());
 
@@ -308,6 +311,18 @@ pub async fn spawn_gossip_tasks(
                         Err(e) => tracing::warn!(error = %e, ?action, "outbound encode failed"),
                     },
                 },
+                maybe_publish = publish_rx.recv() => match maybe_publish {
+                    None => break,
+                    Some((topic, payload)) => {
+                        if let Err(e) = swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish(topic.ident(), payload)
+                        {
+                            tracing::warn!(error = %e, ?topic, "gossipsub publish failed (L1 driver)");
+                        }
+                    }
+                },
             }
         }
     });
@@ -315,6 +330,7 @@ pub async fn spawn_gossip_tasks(
     Ok(GossipSpawn {
         local_peer_id,
         events_rx,
+        publish_tx,
         ready: ready_rx,
         listen_addrs: listen_rx,
         handle,
