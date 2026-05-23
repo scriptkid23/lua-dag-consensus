@@ -4,12 +4,12 @@ use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{Json, Router, routing::post};
 use borsh::to_vec;
+use consensus::api::tier::BlobStatus;
 use consensus::api::query::ConsensusQuery;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tracing::{info, warn};
-use types::macros::MacroCheckpoint;
-use types::primitives::Height;
+use types::primitives::{BlobId, Height};
 
 use crate::query::RocksConsensusQuery;
 
@@ -46,6 +46,7 @@ async fn rpc(
     let result = match req.method.as_str() {
         "lua_getLatestFinalized" => latest_finalized(&query),
         "lua_getMacroCheckpointAt" => macro_checkpoint_at(&query, &req.params),
+        "lua_getBlobStatus" => blob_status_at(&query, &req.params),
         _ => serde_json::Value::Null,
     };
     Json(RpcResp {
@@ -91,6 +92,42 @@ fn macro_checkpoint_at(query: &RocksConsensusQuery, params: &serde_json::Value) 
         Ok(None) => serde_json::Value::Null,
         Err(e) => {
             warn!(target: "node::rpc", error = %e, "macro_checkpoint_at query failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn blob_status_wire_name(status: BlobStatus) -> &'static str {
+    match status {
+        BlobStatus::Accepted => "accepted",
+        BlobStatus::SoftConfirmed => "soft_confirmed",
+        BlobStatus::Justified => "justified",
+        BlobStatus::Finalized => "finalized",
+        BlobStatus::EpochFinalized => "epoch_finalized",
+    }
+}
+
+fn blob_status_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let Some(hex_raw) = params.get(0).and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let hex_str = hex_raw.strip_prefix("0x").unwrap_or(hex_raw);
+    let Ok(bytes) = hex::decode(hex_str) else {
+        return serde_json::Value::Null;
+    };
+    if bytes.len() != 32 {
+        return serde_json::Value::Null;
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    let blob = BlobId(id);
+    match query.blob_status(&blob) {
+        Ok(status) => serde_json::json!({
+            "blob_id": format!("0x{}", hex::encode(id)),
+            "status": blob_status_wire_name(status),
+        }),
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "blob_status query failed");
             serde_json::Value::Null
         }
     }

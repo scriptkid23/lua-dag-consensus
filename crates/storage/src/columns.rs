@@ -25,6 +25,8 @@ pub enum ColumnFamily {
     SlashEvidence,
     /// `(validator, target_epoch) -> VoteRecord`.
     VoteBook,
+    /// `blob_id -> BlobStatus` (single byte).
+    BlobStatus,
 }
 
 impl ColumnFamily {
@@ -41,6 +43,7 @@ impl ColumnFamily {
             Self::ValidatorSet => "valset",
             Self::SlashEvidence => "slash",
             Self::VoteBook => "votebook",
+            Self::BlobStatus => "blob_status",
         }
     }
 
@@ -57,6 +60,7 @@ impl ColumnFamily {
             Self::ValidatorSet,
             Self::SlashEvidence,
             Self::VoteBook,
+            Self::BlobStatus,
         ]
     }
 }

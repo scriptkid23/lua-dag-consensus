@@ -1,6 +1,7 @@
 //! Type-specific stores. Each module exposes encode-and-put / decode-on-get
 //! helpers built on top of [`crate::db::Database`].
 
+pub mod blob_status_store;
 pub mod macro_store;
 pub mod micro_store;
 pub mod slash_store;

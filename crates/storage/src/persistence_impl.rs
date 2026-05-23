@@ -7,13 +7,15 @@ use types::{
     crypto_types::Hash32,
     macros::{MacroCheckpoint, MacroQc},
     micro::MicroQc,
-    primitives::Height,
+    primitives::{BlobId, Height},
     slashing::SlashEvidence,
 };
 
+use consensus::api::tier::BlobStatus;
+
 use crate::{
     db::Database,
-    stores::{macro_store, micro_store, slash_store},
+    stores::{blob_status_store, macro_store, micro_store, slash_store},
 };
 
 /// Thread-safe RocksDB-backed implementation of [`Persistence`].
@@ -38,6 +40,23 @@ impl RocksPersistence {
     #[must_use]
     pub fn database(&self) -> &Arc<Database> {
         &self.db
+    }
+
+    /// Monotonic blob lifecycle update (Appendix A tiers).
+    pub fn update_blob_status(
+        &self,
+        blob: &BlobId,
+        status: BlobStatus,
+    ) -> consensus::Result<()> {
+        blob_status_store::put_monotonic(&self.db, blob, status).map_err(|e| map_err(&e))
+    }
+
+    /// Current blob tier; defaults to [`BlobStatus::Accepted`] when unknown.
+    pub fn blob_status(&self, blob: &BlobId) -> consensus::Result<BlobStatus> {
+        match blob_status_store::get(&self.db, blob).map_err(|e| map_err(&e))? {
+            Some(s) => Ok(s),
+            None => Ok(BlobStatus::Accepted),
+        }
     }
 }
 
@@ -144,5 +163,21 @@ mod tests {
         p.store_macro_qc(&qc).unwrap();
         let got = p.macro_qc_for(&Hash32([3; 32])).unwrap();
         assert_eq!(got, Some(qc));
+    }
+
+    #[test]
+    fn blob_status_monotonic_via_persistence_api() {
+        use types::primitives::BlobId;
+
+        let db = fresh_db();
+        let p = RocksPersistence::new(db);
+        let blob = BlobId([0x11; 32]);
+        p.update_blob_status(&blob, BlobStatus::SoftConfirmed)
+            .unwrap();
+        p.update_blob_status(&blob, BlobStatus::Justified).unwrap();
+        p.update_blob_status(&blob, BlobStatus::SoftConfirmed)
+            .unwrap();
+        assert_eq!(p.blob_status(&blob).unwrap(), BlobStatus::Justified);
+        assert_eq!(p.blob_status(&BlobId([0x22; 32])).unwrap(), BlobStatus::Accepted);
     }
 }

@@ -18,6 +18,11 @@ in `docker-compose.yml`:
 RocksDB lives under `/data/rocksdb` inside the container, bind-mounted to
 `./devnet-data/nodeN` on the host so state survives container restarts.
 
+**Schema upgrade:** adding the `blob_status` column family requires a fresh
+RocksDB directory. After pulling a build that introduces blob persistence, run
+`docker compose down -v` once to wipe `./devnet-data/` before bringing the
+devnet back up.
+
 ## Healthcheck strategy
 
 The chosen healthcheck path is the **in-binary `node --health-probe`**

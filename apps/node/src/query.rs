@@ -53,8 +53,8 @@ impl ConsensusQuery for RocksConsensusQuery {
         Ok(Round(0))
     }
 
-    fn blob_status(&self, _blob: &BlobId) -> Result<BlobStatus> {
-        Ok(BlobStatus::Accepted)
+    fn blob_status(&self, blob: &BlobId) -> Result<BlobStatus> {
+        self.persistence.blob_status(blob)
     }
 
     fn macro_checkpoint_hash(&self, height: Height) -> Result<Option<Hash32>> {

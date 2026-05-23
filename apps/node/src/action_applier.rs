@@ -67,11 +67,12 @@ impl ActionApplier {
                 self.timer_registry.cancel(*id);
             }
             Action::UpdateBlobStatus { blob, status } => {
+                self.persistence.update_blob_status(blob, *status)?;
                 debug!(
                     target: "node::action_applier",
                     ?blob,
                     ?status,
-                    "UpdateBlobStatus (not persisted yet)"
+                    "UpdateBlobStatus persisted"
                 );
             }
             Action::NotifyInactivityLeak {

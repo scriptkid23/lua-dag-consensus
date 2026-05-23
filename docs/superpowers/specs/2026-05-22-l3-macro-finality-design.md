@@ -1,7 +1,7 @@
 # Design: Milestone B — L3 Macro-Finality on `sim` (phased 03c-1 / 03c-2)
 
 **Date:** 2026-05-22
-**Status:** 03c-2 landed; 03d landed; 06b-l3 landed; **03d+ landed**; **06b-L1 landed** (ingress + vertex driver; see [`2026-05-23-06b-l1-vertex-driver.md`](../plans/2026-05-23-06b-l1-vertex-driver.md))
+**Status:** 03c-2 landed; 03d landed; 06b-l3 landed; **03d+ landed**; **06b-L1 landed**; **BlobStatus persist landed** (see [`2026-05-23-blob-status-persist.md`](../plans/2026-05-23-blob-status-persist.md))
 **Audience:** Contributors implementing macro-finality + sim driver
 **Relations:** Extends [`2026-05-11-folder-architecture-design.md`](2026-05-11-folder-architecture-design.md) and [`2026-05-19-l2-sim-milestone-a-design.md`](2026-05-19-l2-sim-milestone-a-design.md). Does **not** include `T_macropropose` backup proposer, Mode A subnet rotation, Mode B leaderless fallback, real BLS sign/verify, surround/double-vote detection, inactivity leak, or L4 BTC anchor — those are 03c-2 and 03d.
 
