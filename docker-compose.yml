@@ -34,6 +34,8 @@ services:
     ports:
       - "9000:9000"
       - "9100:9100"
+      # JSON-RPC (lua_getLatestFinalized, …) — query via node0 only.
+      - "9200:9200"
     volumes:
       - ./devnet-data/node0:/data/rocksdb
 

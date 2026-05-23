@@ -50,6 +50,15 @@ docker compose up --build -d
 # Each node exposes admin on host port 9100..9103.
 curl -fsS http://127.0.0.1:9100/readyz
 
+# node0 also exposes JSON-RPC on host port 9200 (inside container: 9200).
+curl -fsS -X POST http://127.0.0.1:9200/ \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"lua_getLatestFinalized","params":[]}'
+
+# Full E2E smoke: wait for L3 macro finality via RPC (needs all four nodes).
+chmod +x scripts/devnet_e2e_smoke.sh
+./scripts/devnet_e2e_smoke.sh
+
 # Stop + remove containers (bind-mounted RocksDB dirs survive).
 docker compose down
 

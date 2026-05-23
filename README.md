@@ -15,6 +15,10 @@ curl -fsS http://127.0.0.1:9101/readyz
 curl -fsS http://127.0.0.1:9102/readyz
 curl -fsS http://127.0.0.1:9103/readyz
 
+# E2E: poll node0 RPC until macro finality (may take a few minutes).
+chmod +x scripts/devnet_e2e_smoke.sh
+./scripts/devnet_e2e_smoke.sh
+
 docker compose down -v
 ```
 
