@@ -19,6 +19,16 @@ pub struct Metrics {
     pub inactivity_leak_emitted: IntCounter,
     /// Certified vertices rejected by the L1 cert verifier (07a).
     pub vertex_cert_rejected: IntCounter,
+    /// Inbound blob chunks stored by custody.
+    pub blob_chunks_received: IntCounter,
+    /// Blob chunks published locally (submit / demo path).
+    pub blob_chunks_published: IntCounter,
+    /// Blobs that reached full local chunk custody.
+    pub blob_available: IntCounter,
+    /// Inbound blob chunks rejected by the store.
+    pub blob_chunk_rejected: IntCounter,
+    /// Vertex publish skipped because a listed blob is not locally available.
+    pub blob_custody_missing: IntCounter,
 }
 
 impl Metrics {
@@ -55,6 +65,31 @@ impl Metrics {
         registry.register(Box::new(actions_dropped.clone()))?;
         registry.register(Box::new(inactivity_leak_emitted.clone()))?;
         registry.register(Box::new(vertex_cert_rejected.clone()))?;
+        let blob_chunks_received = IntCounter::new(
+            "node_blob_chunks_received_total",
+            "Blob chunks ingested by custody from gossip or local publish",
+        )?;
+        let blob_chunks_published = IntCounter::new(
+            "node_blob_chunks_published_total",
+            "Blob chunks published locally via submit or demo path",
+        )?;
+        let blob_available = IntCounter::new(
+            "node_blob_available_total",
+            "Blobs that reached full local chunk custody",
+        )?;
+        let blob_chunk_rejected = IntCounter::new(
+            "node_blob_chunk_rejected_total",
+            "Inbound blob chunks rejected by the chunk store",
+        )?;
+        let blob_custody_missing = IntCounter::new(
+            "node_blob_custody_missing_total",
+            "Vertex blob refs skipped because payload is not locally available",
+        )?;
+        registry.register(Box::new(blob_chunks_received.clone()))?;
+        registry.register(Box::new(blob_chunks_published.clone()))?;
+        registry.register(Box::new(blob_available.clone()))?;
+        registry.register(Box::new(blob_chunk_rejected.clone()))?;
+        registry.register(Box::new(blob_custody_missing.clone()))?;
         Ok(Self {
             registry,
             events_processed,
@@ -63,6 +98,11 @@ impl Metrics {
             actions_dropped,
             inactivity_leak_emitted,
             vertex_cert_rejected,
+            blob_chunks_received,
+            blob_chunks_published,
+            blob_available,
+            blob_chunk_rejected,
+            blob_custody_missing,
         })
     }
 

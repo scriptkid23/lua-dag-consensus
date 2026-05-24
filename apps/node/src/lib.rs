@@ -7,6 +7,7 @@
 
 #![cfg_attr(not(test), warn(missing_docs))]
 
+pub mod blob;
 pub mod action_applier;
 pub mod args;
 pub mod config;

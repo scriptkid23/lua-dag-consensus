@@ -27,6 +27,8 @@ pub enum ColumnFamily {
     VoteBook,
     /// `blob_id -> BlobStatus` (single byte).
     BlobStatus,
+    /// `(blob_id, chunk_index) -> chunk bytes`.
+    BlobChunk,
 }
 
 impl ColumnFamily {
@@ -44,6 +46,7 @@ impl ColumnFamily {
             Self::SlashEvidence => "slash",
             Self::VoteBook => "votebook",
             Self::BlobStatus => "blob_status",
+            Self::BlobChunk => "blob_chunk",
         }
     }
 
@@ -61,6 +64,7 @@ impl ColumnFamily {
             Self::SlashEvidence,
             Self::VoteBook,
             Self::BlobStatus,
+            Self::BlobChunk,
         ]
     }
 }

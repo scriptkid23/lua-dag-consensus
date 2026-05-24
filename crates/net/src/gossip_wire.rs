@@ -9,6 +9,7 @@
 
 use consensus::action::Action;
 use consensus::event::{BlsPartial, Event, SubnetAggregate};
+use dag::blob::chunk::BlobChunk;
 use types::dag::CertifiedVertex;
 use types::macros::{MacroProposal, MacroQc};
 use types::micro::MicroQc;
@@ -46,6 +47,23 @@ pub fn outbound_broadcast(action: &Action) -> Result<Option<(Topic, Vec<u8>)>> {
 /// Encode a certified vertex for gossip publish (host L1 driver path).
 pub fn encode_certified_vertex(cv: &CertifiedVertex) -> Result<(Topic, Vec<u8>)> {
     Ok((Topic::CertifiedVertex, encode_action_payload(cv)?))
+}
+
+/// Encode a blob chunk for gossip publish (host blob custody path).
+pub fn encode_blob_chunk(chunk: &BlobChunk) -> Result<(Topic, Vec<u8>)> {
+    Ok((
+        Topic::BlobChunk,
+        borsh::to_vec(chunk).map_err(|e| crate::error::Error::Codec(e.to_string()))?,
+    ))
+}
+
+/// Decode an inbound blob chunk; returns `None` when `topic` is not blob-chunk.
+pub fn decode_blob_chunk(topic: &str, data: &[u8]) -> Result<Option<BlobChunk>> {
+    if Topic::from_wire_name(topic) != Some(Topic::BlobChunk) {
+        return Ok(None);
+    }
+    let chunk = borsh::from_slice(data).map_err(|e| crate::error::Error::Codec(e.to_string()))?;
+    Ok(Some(chunk))
 }
 
 /// Returns `true` iff this action would have been published by [`outbound_broadcast`].
@@ -111,6 +129,7 @@ pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
             let v: CertifiedVertex = decode_event_payload(data)?;
             Ok(Some(Event::CertifiedVertexReceived(v)))
         }
+        Topic::BlobChunk => Ok(None),
     }
 }
 
@@ -246,5 +265,18 @@ mod tests {
     fn unknown_topic_returns_none() {
         let ev = inbound_message("lua-dag/v1/unknown", &[]).unwrap();
         assert!(ev.is_none());
+    }
+
+    #[test]
+    fn blob_chunk_encode_decode_roundtrip() {
+        use dag::blob::chunk::split_payload;
+        let payload = vec![0xEFu8; 70_000];
+        let chunk = split_payload(&payload, 65_536).into_iter().next().unwrap();
+        let (topic, bytes) = encode_blob_chunk(&chunk).unwrap();
+        assert_eq!(topic, Topic::BlobChunk);
+        let decoded = decode_blob_chunk(&topic.wire_name(), &bytes)
+            .unwrap()
+            .expect("chunk");
+        assert_eq!(decoded, chunk);
     }
 }

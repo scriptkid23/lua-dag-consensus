@@ -23,6 +23,22 @@ Use codegraph for **structural** questions — what calls what, what would break
 | "What files exist under path/" | `codegraph_files` |
 | "Is the index healthy?" | `codegraph_status` |
 
+### MCP parameters (required)
+
+Each tool uses a **different** required argument name — do not reuse `query` for everything.
+
+| Tool | Required arg | Example |
+|------|--------------|---------|
+| `codegraph_context` | **`task`** | `{ "task": "how does blob custody work" }` |
+| `codegraph_search` | **`query`** | `{ "query": "BlobRef" }` |
+| `codegraph_explore` | **`query`** | `{ "query": "BlobStore split_payload chunk.rs" }` |
+| `codegraph_node` | **`symbol`** | `{ "symbol": "BlobRef" }` |
+| `codegraph_callers` / `callees` / `impact` | **`symbol`** | `{ "symbol": "build_certified_vertex" }` |
+| `codegraph_files` | *(none)* | `{ "path": "crates/dag" }` |
+| `codegraph_status` | *(none)* | `{}` |
+
+**Common mistake:** passing `query` to `codegraph_context` — the server returns `task must be a non-empty string`.
+
 ### Rules of thumb
 
 - **Answer directly — don't delegate exploration.** For "how does X work" / architecture / trace questions, answer with 2-3 codegraph calls: `codegraph_context` first, then ONE `codegraph_explore` for the source of the symbols it surfaces. Codegraph IS the pre-built index, so spawning a separate file-reading sub-task/agent — or running a grep + read loop — repeats work codegraph already did and costs more for the same answer.

@@ -44,7 +44,7 @@ async fn micro_qc_round_trips_between_two_loopback_swarms() {
     // ─── receiver (node B) — binds first so A can dial it ──────────────
     let kp_b = devnet_keypair_from_label("loopback-b").unwrap();
     let (_actions_b_tx, actions_b_rx) = mpsc::channel::<Action>(8);
-    let mut spawn_b = spawn_gossip_tasks(kp_b, loopback_cfg(vec![]), actions_b_rx)
+    let mut spawn_b = spawn_gossip_tasks(kp_b, loopback_cfg(vec![]), actions_b_rx, None)
         .await
         .expect("spawn B");
     wait_ready(&mut spawn_b).await;
@@ -57,7 +57,7 @@ async fn micro_qc_round_trips_between_two_loopback_swarms() {
     let kp_a = devnet_keypair_from_label("loopback-a").unwrap();
     let (actions_a_tx, actions_a_rx) = mpsc::channel::<Action>(8);
     let mut spawn_a =
-        spawn_gossip_tasks(kp_a, loopback_cfg(vec![b_dial.to_string()]), actions_a_rx)
+        spawn_gossip_tasks(kp_a, loopback_cfg(vec![b_dial.to_string()]), actions_a_rx, None)
             .await
             .expect("spawn A");
     wait_ready(&mut spawn_a).await;

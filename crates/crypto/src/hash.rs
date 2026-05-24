@@ -44,6 +44,10 @@ pub mod dst {
     pub const VERTEX_HASH: &[u8] = b"lua-dag/v1/vertex-hash";
     /// BLS quorum certificate domain for certified vertices (L1 07a).
     pub const VERTEX_CERT: &[u8] = b"lua-dag/v1/vertex-cert";
+    /// Content-addressed blob identifier (L1 07b).
+    pub const BLOB_ID: &[u8] = b"lua-dag/v1/blob-id";
+    /// Payload commitment for BlobRef (L1 07b; RS/KZG deferred to 07c).
+    pub const BLOB_COMMIT: &[u8] = b"lua-dag/v1/blob-commit";
 }
 
 /// Blake3-256 over `data` with a DST prefix.
@@ -137,6 +141,8 @@ mod tests {
             dst::MACRO_PROPOSER_SIG,
             dst::VERTEX_HASH,
             dst::VERTEX_CERT,
+            dst::BLOB_ID,
+            dst::BLOB_COMMIT,
         ];
         let set: HashSet<&[u8]> = ids.iter().copied().collect();
         assert_eq!(set.len(), ids.len(), "DST registry has a duplicate");

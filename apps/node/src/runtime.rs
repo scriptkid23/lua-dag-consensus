@@ -14,6 +14,7 @@ use tracing::{info, warn};
 use crate::{
     action_applier::ActionApplier,
     args::Args,
+    blob::{BlobCustody, RocksBlobStore},
     config::NodeConfig,
     devnet_keys::validator_id_from_label,
     host_context::{ChainedBeacon, StubHostBundle},
@@ -132,6 +133,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     // ─── Live swarm ────────────────────────────────────────────────────
     let (net_actions_tx, net_actions_rx) = mpsc::channel::<Action>(1024);
     let mut gossip_publish_tx: Option<mpsc::Sender<(net::gossip::Topic, Vec<u8>)>> = None;
+    let mut blob_custody_handle: Option<crate::blob::BlobCustodyHandle> = None;
     let (swarm_handle, net_ready_rx) = if args.allow_skeleton_network
         && cfg.node.network_mode != "live"
     {
@@ -147,10 +149,32 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         }
         let keypair = net::deterministic_key::devnet_keypair_from_label(&cfg.node.identity.label)
             .context("derive devnet keypair from node.identity.label")?;
-        let spawn = net::swarm_runner::spawn_gossip_tasks(keypair, net_cfg, net_actions_rx)
-            .await
-            .context("spawn gossipsub swarm")?;
-        gossip_publish_tx = Some(spawn.publish_tx);
+        let blob_channel = cfg
+            .node
+            .l1_blob_custody_enabled
+            .then(|| mpsc::channel::<dag::blob::chunk::BlobChunk>(1024));
+        let spawn = net::swarm_runner::spawn_gossip_tasks(
+            keypair,
+            net_cfg,
+            net_actions_rx,
+            blob_channel.as_ref().map(|(tx, _)| tx.clone()),
+        )
+        .await
+        .context("spawn gossipsub swarm")?;
+        gossip_publish_tx = Some(spawn.publish_tx.clone());
+
+        if let Some((_, chunks_rx)) = blob_channel {
+            let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)))
+                as Arc<dyn dag::blob::store::BlobStore>;
+            blob_custody_handle = Some(BlobCustody::spawn(
+                store,
+                chunks_rx,
+                spawn.publish_tx.clone(),
+                cfg.node.blob_chunk_size_bytes,
+                metrics.clone(),
+            ));
+            info!(target: "node", "blob custody started");
+        }
 
         let mut events_rx_swarm = spawn.events_rx;
         let events_tx_for_swarm = events_tx.clone();
@@ -186,7 +210,13 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         admin_shutdown,
     )
     .await?;
-    rpc_server::serve(&cfg.rpc_listen, query, rpc_shutdown).await?;
+    rpc_server::serve(
+        &cfg.rpc_listen,
+        query,
+        blob_custody_handle.clone(),
+        rpc_shutdown,
+    )
+    .await?;
 
     if cfg.node.l1_driver_enabled {
         let publish_tx = gossip_publish_tx.with_context(|| {
@@ -202,6 +232,15 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
             publish_tx,
             std::time::Duration::from_millis(round_ms),
             cfg.node.l1_real_vertex_certs,
+            if cfg.node.l1_blob_custody_enabled {
+                blob_custody_handle.clone()
+            } else {
+                None
+            },
+            cfg.node.l1_demo_blob_enabled && cfg.node.l1_blob_custody_enabled,
+            cfg.node.demo_blob_every_n_rounds,
+            cfg.node.blob_chunk_size_bytes,
+            metrics.clone(),
         );
         tokio::spawn(async move {
             driver.run().await;

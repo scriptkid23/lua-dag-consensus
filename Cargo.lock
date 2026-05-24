@@ -2323,6 +2323,7 @@ dependencies = [
  "borsh",
  "consensus",
  "crypto",
+ "dag",
  "futures",
  "hex",
  "libp2p",

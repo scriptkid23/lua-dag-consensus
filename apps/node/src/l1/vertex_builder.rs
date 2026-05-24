@@ -3,7 +3,7 @@
 use crypto::hash::{blake3_with_dst, dst};
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
-    dag::{CertifiedVertex, Vertex},
+    dag::{BlobRef, CertifiedVertex, Vertex},
     primitives::{Round, ValidatorId},
     validator::ValidatorSet,
 };
@@ -46,12 +46,32 @@ pub fn build_certified_vertex(
     real_certs: bool,
     valset: &ValidatorSet,
 ) -> CertifiedVertex {
+    build_certified_vertex_with_blobs(
+        round,
+        author,
+        parent_hash,
+        real_certs,
+        valset,
+        vec![],
+    )
+}
+
+/// Build one certified vertex with optional blob references (07b).
+#[must_use]
+pub fn build_certified_vertex_with_blobs(
+    round: u64,
+    author: ValidatorId,
+    parent_hash: Option<Hash32>,
+    real_certs: bool,
+    valset: &ValidatorSet,
+    blobs: Vec<BlobRef>,
+) -> CertifiedVertex {
     if real_certs {
         let mut vertex = Vertex {
             round: Round(round),
             author,
             parents: parent_hash.into_iter().collect(),
-            blobs: vec![],
+            blobs,
             hash: Hash32([0u8; 32]),
         };
         dag::signing::seal_hash(&mut vertex);
@@ -68,7 +88,7 @@ pub fn build_certified_vertex(
             round: Round(round),
             author,
             parents: parent_hash.into_iter().collect(),
-            blobs: vec![],
+            blobs,
             hash,
         },
         certificate: fixture_certificate(),
@@ -86,13 +106,32 @@ pub fn build_quorum_vertices_for_valset(
     parent_hash: Option<Hash32>,
     real_certs: bool,
 ) -> Vec<CertifiedVertex> {
+    build_quorum_vertices_with_blobs(round, valset, parent_hash, real_certs, vec![])
+}
+
+/// Build `2f+1` certified vertices with optional shared blob refs (07b).
+#[must_use]
+pub fn build_quorum_vertices_with_blobs(
+    round: u64,
+    valset: &ValidatorSet,
+    parent_hash: Option<Hash32>,
+    real_certs: bool,
+    blobs: Vec<BlobRef>,
+) -> Vec<CertifiedVertex> {
     let n = u32::try_from(valset.entries.len()).expect("validator count fits u32");
     let quorum = quorum_vertex_count(n);
     (0..quorum)
         .map(|i| {
             let idx = usize::try_from((round + u64::from(i)) % u64::from(n)).expect("index");
             let author = valset.entries[idx].id;
-            build_certified_vertex(round, author, parent_hash, real_certs, valset)
+            build_certified_vertex_with_blobs(
+                round,
+                author,
+                parent_hash,
+                real_certs,
+                valset,
+                blobs.clone(),
+            )
         })
         .collect()
 }

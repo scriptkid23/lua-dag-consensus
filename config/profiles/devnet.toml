@@ -26,6 +26,12 @@ l1_driver_enabled = true
 # Real BLS vertex quorum certificates (plan 07a).
 l1_real_vertex_certs = true
 
+# Blob payload custody + chunk gossip (plan 07b).
+l1_blob_custody_enabled = true
+blob_chunk_size_bytes = 65536
+l1_demo_blob_enabled = true
+demo_blob_every_n_rounds = 8
+
 [net]
 listen = ["/ip4/0.0.0.0/tcp/9000"]
 bootstrap = []
