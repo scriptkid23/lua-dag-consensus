@@ -15,9 +15,9 @@ pub fn quorum_vertex_count(validator_count: u32) -> u32 {
     2 * f + 1
 }
 
-/// Deterministic vertex hash keyed by round and author.
+/// Deterministic vertex hash keyed by round and author (legacy sim/devnet fixture path).
 #[must_use]
-pub fn vertex_hash(round: u64, author: &ValidatorId) -> Hash32 {
+pub fn sim_vertex_hash(round: u64, author: &ValidatorId) -> Hash32 {
     let mut buf = Vec::with_capacity(8 + 32);
     buf.extend_from_slice(&round.to_be_bytes());
     buf.extend_from_slice(author.as_bytes());
@@ -31,14 +31,38 @@ fn fixture_certificate() -> BlsAggSig {
     }
 }
 
+fn signer_indices_for_round(round: u64, n: u32, quorum: u32) -> Vec<u32> {
+    (0..quorum)
+        .map(|i| u32::try_from((round + u64::from(i)) % u64::from(n)).expect("index"))
+        .collect()
+}
+
 /// Build one certified vertex for a devnet validator at `round`.
 #[must_use]
 pub fn build_certified_vertex(
     round: u64,
     author: ValidatorId,
     parent_hash: Option<Hash32>,
+    real_certs: bool,
+    valset: &ValidatorSet,
 ) -> CertifiedVertex {
-    let hash = vertex_hash(round, &author);
+    if real_certs {
+        let mut vertex = Vertex {
+            round: Round(round),
+            author,
+            parents: parent_hash.into_iter().collect(),
+            blobs: vec![],
+            hash: Hash32([0u8; 32]),
+        };
+        dag::signing::seal_hash(&mut vertex);
+        let n = u32::try_from(valset.entries.len()).expect("validator count fits u32");
+        let quorum = quorum_vertex_count(n);
+        let indices = signer_indices_for_round(round, n, quorum);
+        return dag::cert::build_quorum_cert(&vertex, valset, &indices)
+            .expect("devnet quorum cert must build");
+    }
+
+    let hash = sim_vertex_hash(round, &author);
     CertifiedVertex {
         vertex: Vertex {
             round: Round(round),
@@ -60,6 +84,7 @@ pub fn build_quorum_vertices_for_valset(
     round: u64,
     valset: &ValidatorSet,
     parent_hash: Option<Hash32>,
+    real_certs: bool,
 ) -> Vec<CertifiedVertex> {
     let n = u32::try_from(valset.entries.len()).expect("validator count fits u32");
     let quorum = quorum_vertex_count(n);
@@ -67,7 +92,7 @@ pub fn build_quorum_vertices_for_valset(
         .map(|i| {
             let idx = usize::try_from((round + u64::from(i)) % u64::from(n)).expect("index");
             let author = valset.entries[idx].id;
-            build_certified_vertex(round, author, parent_hash)
+            build_certified_vertex(round, author, parent_hash, real_certs, valset)
         })
         .collect()
 }
@@ -80,7 +105,7 @@ mod tests {
     #[test]
     fn builds_quorum_for_devnet_four() {
         let valset = devnet_valset_four();
-        let batch = build_quorum_vertices_for_valset(0, &valset, None);
+        let batch = build_quorum_vertices_for_valset(0, &valset, None, false);
         assert_eq!(batch.len(), 3);
         assert!(batch
             .iter()
@@ -88,9 +113,19 @@ mod tests {
     }
 
     #[test]
+    fn real_certs_verify_against_devnet_valset() {
+        let valset = devnet_valset_four();
+        let batch = build_quorum_vertices_for_valset(0, &valset, None, true);
+        assert_eq!(batch.len(), 3);
+        for cv in &batch {
+            dag::cert::verify_certified_vertex(cv, &valset).expect("real cert must verify");
+        }
+    }
+
+    #[test]
     fn sibling_vertices_in_same_round_have_distinct_hashes() {
         let valset = devnet_valset_four();
-        let batch = build_quorum_vertices_for_valset(5, &valset, None);
+        let batch = build_quorum_vertices_for_valset(5, &valset, None, false);
         assert_eq!(batch.len(), 3);
         let h0 = batch[0].vertex.hash;
         let h1 = batch[1].vertex.hash;

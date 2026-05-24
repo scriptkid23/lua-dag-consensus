@@ -49,6 +49,9 @@ pub struct NodeSection {
     /// When true, spawn the local L1 certified-vertex driver (plan 06b-L1).
     #[serde(default)]
     pub l1_driver_enabled: bool,
+    /// When true, build real BLS quorum certs via `dag::cert` (07a).
+    #[serde(default)]
+    pub l1_real_vertex_certs: bool,
 }
 
 fn default_network_mode() -> String {

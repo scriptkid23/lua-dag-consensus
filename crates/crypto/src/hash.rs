@@ -40,6 +40,10 @@ pub mod dst {
     pub const VALIDATOR_BLS_PARTIAL: &[u8] = b"lua-dag/v1/validator-bls-partial";
     /// Macro proposer signature (L3 03c-1 fixture).
     pub const MACRO_PROPOSER_SIG: &[u8] = b"lua-dag/v1/macro-proposer-sig";
+    /// Production vertex content hash (L1 07a).
+    pub const VERTEX_HASH: &[u8] = b"lua-dag/v1/vertex-hash";
+    /// BLS quorum certificate domain for certified vertices (L1 07a).
+    pub const VERTEX_CERT: &[u8] = b"lua-dag/v1/vertex-cert";
 }
 
 /// Blake3-256 over `data` with a DST prefix.
@@ -131,6 +135,8 @@ mod tests {
             dst::MACRO_MICRO_ROOT,
             dst::VALIDATOR_BLS_PARTIAL,
             dst::MACRO_PROPOSER_SIG,
+            dst::VERTEX_HASH,
+            dst::VERTEX_CERT,
         ];
         let set: HashSet<&[u8]> = ids.iter().copied().collect();
         assert_eq!(set.len(), ids.len(), "DST registry has a duplicate");

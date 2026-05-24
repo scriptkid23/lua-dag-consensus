@@ -29,6 +29,7 @@ pub struct L1Driver {
     events_tx: mpsc::Sender<Event>,
     publish_tx: mpsc::Sender<(Topic, Vec<u8>)>,
     round_duration: Duration,
+    real_vertex_certs: bool,
 }
 
 impl L1Driver {
@@ -42,6 +43,7 @@ impl L1Driver {
         events_tx: mpsc::Sender<Event>,
         publish_tx: mpsc::Sender<(Topic, Vec<u8>)>,
         round_duration: Duration,
+        real_vertex_certs: bool,
     ) -> Self {
         Self {
             virtual_round: 0,
@@ -52,6 +54,7 @@ impl L1Driver {
             events_tx,
             publish_tx,
             round_duration,
+            real_vertex_certs,
         }
     }
 
@@ -82,8 +85,19 @@ impl L1Driver {
             }
         };
 
-        let batch = build_quorum_vertices_for_valset(self.virtual_round, &self.valset, parent);
+        let batch = build_quorum_vertices_for_valset(
+            self.virtual_round,
+            &self.valset,
+            parent,
+            self.real_vertex_certs,
+        );
         for cv in batch {
+            if self.real_vertex_certs {
+                if let Err(e) = dag::cert::verify_certified_vertex(&cv, &self.valset) {
+                    warn!(target: "node::l1_driver", error = %e, "rejecting locally built vertex");
+                    continue;
+                }
+            }
             if let Err(e) = self.dag.ingest(cv.clone()) {
                 warn!(target: "node::l1_driver", error = %e, "ingest failed");
                 continue;
@@ -151,6 +165,7 @@ mod tests {
             events_tx,
             publish_tx,
             Duration::from_millis(10_000),
+            false,
         );
         let quorum = driver.quorum_size();
 

@@ -32,6 +32,7 @@ workspace = true
 [dependencies]
 types       = { path = "../../crates/types" }
 crypto      = { path = "../../crates/crypto" }
+dag         = { path = "../../crates/dag" }
 consensus   = { path = "../../crates/consensus" }
 net         = { path = "../../crates/net" }
 storage     = { path = "../../crates/storage" }
@@ -53,3 +54,4 @@ hex         = { workspace = true }
 [dev-dependencies]
 tempfile    = { workspace = true }
 libp2p      = { workspace = true }
+dag         = { path = "../../crates/dag" }

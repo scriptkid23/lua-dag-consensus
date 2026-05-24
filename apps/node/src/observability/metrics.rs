@@ -17,6 +17,8 @@ pub struct Metrics {
     pub actions_dropped: IntCounter,
     /// Inactivity leak notifications applied locally.
     pub inactivity_leak_emitted: IntCounter,
+    /// Certified vertices rejected by the L1 cert verifier (07a).
+    pub vertex_cert_rejected: IntCounter,
 }
 
 impl Metrics {
@@ -44,10 +46,15 @@ impl Metrics {
             "node_inactivity_leak_emitted_total",
             "NotifyInactivityLeak actions applied by the node",
         )?;
+        let vertex_cert_rejected = IntCounter::new(
+            "node_vertex_cert_rejected_total",
+            "Certified vertices rejected by the L1 BLS certificate verifier",
+        )?;
         registry.register(Box::new(actions_dispatched.clone()))?;
         registry.register(Box::new(events_dropped.clone()))?;
         registry.register(Box::new(actions_dropped.clone()))?;
         registry.register(Box::new(inactivity_leak_emitted.clone()))?;
+        registry.register(Box::new(vertex_cert_rejected.clone()))?;
         Ok(Self {
             registry,
             events_processed,
@@ -55,6 +62,7 @@ impl Metrics {
             events_dropped,
             actions_dropped,
             inactivity_leak_emitted,
+            vertex_cert_rejected,
         })
     }
 

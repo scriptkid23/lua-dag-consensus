@@ -1,0 +1,22 @@
+[package]
+name = "dag"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+borsh = { workspace = true }
+crypto = { path = "../crypto" }
+types = { path = "../types" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }

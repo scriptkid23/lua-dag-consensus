@@ -201,6 +201,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
             events_tx.clone(),
             publish_tx,
             std::time::Duration::from_millis(round_ms),
+            cfg.node.l1_real_vertex_certs,
         );
         tokio::spawn(async move {
             driver.run().await;
@@ -218,6 +219,8 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         net_actions_tx,
         host_bundle,
         action_applier,
+        valset,
+        cfg.node.l1_real_vertex_certs,
     );
     let orch_task = tokio::spawn(orch.run());
 

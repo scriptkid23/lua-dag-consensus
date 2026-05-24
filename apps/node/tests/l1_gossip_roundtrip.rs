@@ -57,7 +57,7 @@ async fn certified_vertex_round_trips_between_two_loopback_swarms() {
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     let valset = devnet_valset_four();
-    let cv = build_quorum_vertices_for_valset(0, &valset, None)
+    let cv = build_quorum_vertices_for_valset(0, &valset, None, true)
         .into_iter()
         .next()
         .expect("quorum batch non-empty");

@@ -21,6 +21,7 @@ workspace = true
 [dependencies]
 types       = { path = "../../crates/types" }
 crypto      = { path = "../../crates/crypto" }
+dag         = { path = "../../crates/dag" }
 consensus   = { path = "../../crates/consensus" }
 borsh       = { workspace = true }
 serde       = { workspace = true }

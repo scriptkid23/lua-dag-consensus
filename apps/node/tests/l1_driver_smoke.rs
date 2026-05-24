@@ -80,6 +80,8 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
         net_actions_tx,
         host_bundle,
         action_applier,
+        valset.clone(),
+        true,
     );
     tokio::spawn(orch.run());
 
@@ -91,6 +93,7 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
         events_tx,
         publish_tx,
         Duration::from_millis(50),
+        true,
     );
     tokio::spawn(driver.run());
 

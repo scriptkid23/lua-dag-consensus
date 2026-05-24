@@ -11,6 +11,7 @@ use net::Bridge;
 use storage::RocksPersistence;
 use tokio::sync::mpsc;
 use tracing::warn;
+use types::validator::ValidatorSet;
 
 use crate::{
     action_applier::ActionApplier,
@@ -33,6 +34,8 @@ pub struct Orchestrator {
     persistence: RocksPersistence,
     /// Local side-effects (persist, timers, beacon).
     action_applier: ActionApplier,
+    valset: ValidatorSet,
+    l1_real_vertex_certs: bool,
 }
 
 impl Orchestrator {
@@ -48,6 +51,8 @@ impl Orchestrator {
         net_actions_tx: mpsc::Sender<Action>,
         host_bundle: StubHostBundle,
         action_applier: ActionApplier,
+        valset: ValidatorSet,
+        l1_real_vertex_certs: bool,
     ) -> Self {
         Self {
             sm,
@@ -58,6 +63,8 @@ impl Orchestrator {
             host_bundle,
             persistence,
             action_applier,
+            valset,
+            l1_real_vertex_certs,
         }
     }
 
@@ -69,6 +76,17 @@ impl Orchestrator {
                     let Some(event) = maybe_event else { break };
                     self.metrics.events_processed.inc();
                     if let Event::CertifiedVertexReceived(cv) = &event {
+                        if self.l1_real_vertex_certs {
+                            if let Err(e) = dag::cert::verify_certified_vertex(cv, &self.valset) {
+                                warn!(
+                                    target: "node::orchestrator",
+                                    error = %e,
+                                    "rejecting certified vertex"
+                                );
+                                self.metrics.vertex_cert_rejected.inc();
+                                continue;
+                            }
+                        }
                         if let Err(e) = self.host_bundle.dag.ingest(cv.clone()) {
                             warn!(
                                 target: "node::orchestrator",

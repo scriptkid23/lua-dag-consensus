@@ -23,6 +23,9 @@ l3_wire_complete = true
 # Local L1 vertex producer (plan 06b-L1).
 l1_driver_enabled = true
 
+# Real BLS vertex quorum certificates (plan 07a).
+l1_real_vertex_certs = true
+
 [net]
 listen = ["/ip4/0.0.0.0/tcp/9000"]
 bootstrap = []

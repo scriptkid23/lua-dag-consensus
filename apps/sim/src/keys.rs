@@ -38,6 +38,12 @@ impl ValidatorKeyRing {
         self.bls[i].public().to_bytes()
     }
 
+    /// BLS secret key for validator index `i` (sim vertex cert signing).
+    #[must_use]
+    pub fn bls_secret(&self, i: usize) -> crypto::bls::SecretKey {
+        self.bls[i].clone()
+    }
+
     /// VRF public key for validator index `i`.
     #[must_use]
     pub fn vrf_pubkey(&self, i: usize) -> VrfPubkey {

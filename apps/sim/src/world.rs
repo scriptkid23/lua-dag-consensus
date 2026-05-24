@@ -390,7 +390,13 @@ impl World {
         let n = u32::try_from(self.machines.len()).expect("validator count");
         let r = self.virtual_round;
         let parent = self.parent_hash_for_round(r);
-        let batch = build_quorum_vertices_for_round(r, n, parent);
+        let set = self
+            .valset
+            .set_for(Epoch(0))
+            .ok()
+            .flatten()
+            .expect("validator set for vertex production");
+        let batch = build_quorum_vertices_for_round(r, &set, parent, &self.key_ring);
 
         let withheld_author = if self.anchor_withhold {
             let wave = WaveId::of_round(Round(r));
