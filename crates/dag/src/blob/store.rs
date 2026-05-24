@@ -1,5 +1,5 @@
 use thiserror::Error;
-use types::primitives::BlobId;
+use types::{dag::ChunkRef, primitives::BlobId};
 
 use crate::blob::chunk::BlobChunk;
 
@@ -19,4 +19,6 @@ pub trait BlobStore: Send + Sync {
     fn get_chunk(&self, blob_id: &BlobId, index: u32) -> Result<Option<Vec<u8>>, StoreError>;
     /// Whether chunk `index` exists for `blob_id`.
     fn has_chunk(&self, blob_id: &BlobId, index: u32) -> Result<bool, StoreError>;
+    /// List stored chunk references for a blob.
+    fn list_chunk_refs(&self, blob_id: &BlobId) -> Result<Vec<ChunkRef>, StoreError>;
 }

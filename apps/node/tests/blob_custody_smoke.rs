@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use dag::blob::commit::blob_id_from_payload;
 use node::{
-    blob::{BlobCustody, RocksBlobStore},
+    blob::{BlobCustody, BlobCustodyConfig, RocksBlobStore},
     observability::metrics::Metrics,
 };
 use storage::{
@@ -41,7 +41,10 @@ async fn publish_marks_blob_available_and_persists_chunks() {
         store_for_custody,
         chunks_rx,
         publish_tx,
-        65_536,
+        BlobCustodyConfig {
+            chunk_size: 65_536,
+            erasure: None,
+        },
         metrics,
     );
 

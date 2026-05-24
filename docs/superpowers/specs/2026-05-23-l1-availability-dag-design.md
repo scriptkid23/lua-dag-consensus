@@ -1,7 +1,7 @@
 # Design: L1 Availability DAG + Real Vertex Certificates
 
 **Date:** 2026-05-23  
-**Status:** Phase A (07a) landed; Phase B (07b) landed  
+**Status:** Phase A (07a) landed; Phase B (07b) landed; Phase C (07c) landed  
 **Audience:** Contributors extending L1 beyond 06b-L1 driver/ingress  
 **Prerequisite:** 06b-L1 landed (`LiveDag`, `L1Driver`, gossip `certified-vertex`, devnet E2E)  
 **Relations:** [`2026-05-11-folder-architecture-design.md`](2026-05-11-folder-architecture-design.md) §L1; [`2026-05-23-06b-l1-vertex-driver.md`](../plans/2026-05-23-06b-l1-vertex-driver.md)

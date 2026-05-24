@@ -29,5 +29,5 @@ fn chunk_carries_blob_id_and_index() {
     let chunks = split_payload(payload, 32);
     assert_eq!(chunks.len(), 1);
     assert_ne!(chunks[0].blob_id, BlobId([0; 32]));
-    assert_eq!(chunks[0].index, 0);
+    assert_eq!(chunks[0].index(), 0);
 }

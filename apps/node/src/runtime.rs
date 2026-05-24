@@ -14,7 +14,7 @@ use tracing::{info, warn};
 use crate::{
     action_applier::ActionApplier,
     args::Args,
-    blob::{BlobCustody, RocksBlobStore},
+    blob::{BlobCustody, BlobCustodyConfig, RocksBlobStore},
     config::NodeConfig,
     devnet_keys::validator_id_from_label,
     host_context::{ChainedBeacon, StubHostBundle},
@@ -170,7 +170,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
                 store,
                 chunks_rx,
                 spawn.publish_tx.clone(),
-                cfg.node.blob_chunk_size_bytes,
+                blob_custody_config(&cfg.node),
                 metrics.clone(),
             ));
             info!(target: "node", "blob custody started");
@@ -198,7 +198,10 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         (Some(spawn.handle), spawn.ready)
     };
 
-    let query = Arc::new(RocksConsensusQuery::new(persistence.clone()));
+    let query = Arc::new(RocksConsensusQuery::new(
+        persistence.clone(),
+        Arc::clone(&live_dag),
+    ));
 
     // HTTP surfaces.
     let admin_shutdown = subscribe_to_shutdown(shutdown_rx.clone());
@@ -273,6 +276,17 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         h.abort();
     }
     Ok(())
+}
+
+fn blob_custody_config(node: &crate::config_layers::NodeSection) -> BlobCustodyConfig {
+    BlobCustodyConfig {
+        chunk_size: node.blob_chunk_size_bytes,
+        erasure: node.l1_erasure_enabled.then(|| dag::erasure::ErasureConfig {
+            k: node.erasure_k,
+            n: node.erasure_n,
+            data_shard_size: node.erasure_data_shard_size_bytes as usize,
+        }),
+    }
 }
 
 /// One-shot `GET /readyz` against the container-side admin port.

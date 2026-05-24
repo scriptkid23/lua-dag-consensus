@@ -7,8 +7,9 @@ use borsh::to_vec;
 use consensus::api::tier::BlobStatus;
 use consensus::api::query::ConsensusQuery;
 use serde::{Deserialize, Serialize};
+use tokio::net::TcpListener;
 use tracing::{info, warn};
-use types::primitives::{BlobId, Height};
+use types::primitives::{BlobId, Height, Round};
 
 use crate::blob::BlobCustodyHandle;
 use crate::query::RocksConsensusQuery;
@@ -54,6 +55,8 @@ async fn rpc(
         "lua_getMacroCheckpointAt" => macro_checkpoint_at(&state.query, &req.params),
         "lua_getBlobStatus" => blob_status_at(&state.query, &req.params),
         "lua_submitBlob" => submit_blob(&state.blob, &req.params).await,
+        "lua_getCausalSet" => causal_set(&state.query, &req.params),
+        "lua_listBlobChunks" => list_blob_chunks(&state.blob, &req.params),
         _ => serde_json::Value::Null,
     };
     Json(RpcResp {
@@ -155,7 +158,7 @@ async fn submit_blob(
         return serde_json::Value::Null;
     };
     let size_bytes = u64::try_from(payload.len()).unwrap_or(0);
-    let chunk_count = custody.chunk_count_for(size_bytes);
+    let chunk_count = custody.unit_count_for(size_bytes);
     match custody.publish_payload(payload).await {
         Ok(blob_id) => serde_json::json!({
             "blob_id": format!("0x{}", hex::encode(blob_id.0)),
@@ -163,6 +166,43 @@ async fn submit_blob(
         }),
         Err(e) => {
             warn!(target: "node::rpc", error = %e, "lua_submitBlob failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn causal_set(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let from = params.get("from").and_then(|v| v.as_u64()).unwrap_or(0);
+    let to = params.get("to").and_then(|v| v.as_u64()).unwrap_or(from);
+    let hashes = query.causal_set(Round(from), Round(to));
+    serde_json::json!({
+        "hashes": hashes.iter().map(|h| format!("0x{}", hex::encode(h.0))).collect::<Vec<_>>(),
+    })
+}
+
+fn list_blob_chunks(blob: &Option<BlobCustodyHandle>, params: &serde_json::Value) -> serde_json::Value {
+    let Some(custody) = blob else {
+        return serde_json::Value::Null;
+    };
+    let Some(hex_raw) = params.get("blob_id").and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let hex_str = hex_raw.strip_prefix("0x").unwrap_or(hex_raw);
+    let Ok(bytes) = hex::decode(hex_str) else {
+        return serde_json::Value::Null;
+    };
+    if bytes.len() != 32 {
+        return serde_json::Value::Null;
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    let blob_id = BlobId(id);
+    match custody.list_chunk_refs(&blob_id) {
+        Ok(chunks) => serde_json::json!({
+            "chunks": chunks.iter().map(|c| serde_json::json!({ "index": c.index })).collect::<Vec<_>>(),
+        }),
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "lua_listBlobChunks failed");
             serde_json::Value::Null
         }
     }

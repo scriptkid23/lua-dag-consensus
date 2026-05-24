@@ -72,6 +72,23 @@ impl LiveDag {
         }
         Ok(v)
     }
+
+    /// Certified vertex hashes in `from..=to` from the live L1 DAG index.
+    #[must_use]
+    pub fn certified_hashes_in_range(&self, from: Round, to: Round) -> Vec<Hash32> {
+        let mut out = Vec::new();
+        if from.0 > to.0 {
+            return out;
+        }
+        for round in from.0..=to.0 {
+            if let Ok(batch) = self.vertices_at_round(Round(round)) {
+                for cv in batch {
+                    out.push(cv.vertex.hash);
+                }
+            }
+        }
+        out
+    }
 }
 
 impl DagView for LiveDag {

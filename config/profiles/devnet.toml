@@ -32,6 +32,12 @@ blob_chunk_size_bytes = 65536
 l1_demo_blob_enabled = true
 demo_blob_every_n_rounds = 8
 
+# RS erasure-coded blob shards (plan 07c).
+l1_erasure_enabled = true
+erasure_k = 4
+erasure_n = 6
+erasure_data_shard_size_bytes = 32768
+
 [net]
 listen = ["/ip4/0.0.0.0/tcp/9000"]
 bootstrap = []

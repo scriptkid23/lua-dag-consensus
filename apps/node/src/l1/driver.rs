@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use consensus::{config::Config, event::Event};
 use crypto::hash::{blake3_with_dst, dst};
-use dag::blob::commit::{blob_commitment, blob_id_from_payload};
+use dag::blob::commit::blob_id_from_payload;
 use net::gossip::Topic;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -182,7 +182,7 @@ impl L1Driver {
 
         vec![BlobRef {
             blob_id,
-            commitment: blob_commitment(&payload),
+            commitment: custody.blob_ref_commitment(&payload),
             size_bytes: u64::try_from(payload.len()).expect("payload fits u64"),
         }]
     }

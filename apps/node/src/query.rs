@@ -1,5 +1,7 @@
 //! Read-only consensus queries over RocksDB (plan 06b-l3).
 
+use std::sync::Arc;
+
 use consensus::{
     Result,
     api::{query::ConsensusQuery, tier::BlobStatus},
@@ -12,22 +14,33 @@ use types::{
     primitives::{BlobId, Height, Round},
 };
 
-/// `ConsensusQuery` backed by [`RocksPersistence`].
+use crate::live_dag::LiveDag;
+
+/// `ConsensusQuery` backed by [`RocksPersistence`] and optional live L1 index.
 #[derive(Debug, Clone)]
 pub struct RocksConsensusQuery {
     persistence: RocksPersistence,
+    live_dag: Arc<LiveDag>,
 }
 
 impl RocksConsensusQuery {
-    /// Wrap an open persistence handle.
+    /// Wrap persistence plus the live L1 DAG index.
     #[must_use]
-    pub fn new(persistence: RocksPersistence) -> Self {
-        Self { persistence }
+    pub fn new(persistence: RocksPersistence, live_dag: Arc<LiveDag>) -> Self {
+        Self {
+            persistence,
+            live_dag,
+        }
     }
 
     /// Macro checkpoint at `height`, if persisted.
     pub fn macro_checkpoint_at(&self, height: Height) -> Result<Option<MacroCheckpoint>> {
         self.persistence.macro_checkpoint_at(height)
+    }
+
+    /// Certified vertex hashes for rounds `from..=to` (07c causal-set RPC).
+    pub fn causal_set(&self, from: Round, to: Round) -> Vec<Hash32> {
+        self.live_dag.certified_hashes_in_range(from, to)
     }
 }
 

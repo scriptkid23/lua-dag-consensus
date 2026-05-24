@@ -10,7 +10,7 @@ use net::deterministic_key::devnet_keypair_from_label;
 use net::gossip_wire::encode_blob_chunk;
 use net::swarm_runner::{GossipSpawn, spawn_gossip_tasks};
 use node::{
-    blob::{BlobCustody, RocksBlobStore},
+    blob::{BlobCustody, BlobCustodyConfig, RocksBlobStore},
     observability::metrics::Metrics,
 };
 use storage::{config::StorageConfig, db::Database};
@@ -82,7 +82,10 @@ async fn blob_chunks_roundtrip_between_two_loopback_swarms() {
         store,
         blob_rx_b,
         spawn_b.publish_tx.clone(),
-        65_536,
+        BlobCustodyConfig {
+            chunk_size: 65_536,
+            erasure: None,
+        },
         metrics,
     );
 

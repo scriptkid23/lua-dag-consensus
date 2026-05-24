@@ -16,6 +16,7 @@ borsh = { workspace = true }
 crypto = { path = "../crypto" }
 types = { path = "../types" }
 thiserror = { workspace = true }
+reed-solomon-erasure = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }

@@ -114,7 +114,7 @@ fn query_latest_finalized_after_persist() {
         max_total_wal_size_mb: 16,
     })
     .unwrap());
-    let persistence = RocksPersistence::new(db);
+    let persistence = RocksPersistence::new(Arc::clone(&db));
     let cp = MacroCheckpoint {
         height: Height(5),
         epoch: Epoch(0),
@@ -133,7 +133,7 @@ fn query_latest_finalized_after_persist() {
     persistence.store_macro_checkpoint(&cp).unwrap();
     persistence.store_macro_qc(&qc).unwrap();
 
-    let query = RocksConsensusQuery::new(persistence);
+    let query = RocksConsensusQuery::new(persistence, Arc::new(LiveDag::new(db)));
     let got = query.latest_finalized().unwrap().unwrap();
     assert_eq!(got.checkpoint_hash, cp.hash);
 }
@@ -147,7 +147,7 @@ fn macro_checkpoint_query_roundtrip_encoding() {
         max_total_wal_size_mb: 16,
     })
     .unwrap());
-    let persistence = RocksPersistence::new(db);
+    let persistence = RocksPersistence::new(Arc::clone(&db));
     let cp = MacroCheckpoint {
         height: Height(9),
         epoch: Epoch(0),
@@ -156,7 +156,7 @@ fn macro_checkpoint_query_roundtrip_encoding() {
         hash: Hash32([7; 32]),
     };
     persistence.store_macro_checkpoint(&cp).unwrap();
-    let query = RocksConsensusQuery::new(persistence);
+    let query = RocksConsensusQuery::new(persistence, Arc::new(LiveDag::new(db)));
     let got = query.macro_checkpoint_at(Height(9)).unwrap().unwrap();
     assert_eq!(to_vec(&got).unwrap(), to_vec(&cp).unwrap());
 }

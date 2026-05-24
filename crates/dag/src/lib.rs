@@ -5,5 +5,7 @@
 
 pub mod blob;
 pub mod cert;
+pub mod da;
 pub mod devnet;
+pub mod erasure;
 pub mod signing;

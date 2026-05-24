@@ -64,6 +64,30 @@ pub struct NodeSection {
     /// Attach demo blob every N virtual rounds when demo blob is enabled (07b).
     #[serde(default = "default_demo_blob_every")]
     pub demo_blob_every_n_rounds: u64,
+    /// When true, publish RS erasure shards instead of sequential chunks (07c).
+    #[serde(default)]
+    pub l1_erasure_enabled: bool,
+    /// RS data shard count (07c).
+    #[serde(default = "default_erasure_k")]
+    pub erasure_k: u32,
+    /// RS total shard count (07c).
+    #[serde(default = "default_erasure_n")]
+    pub erasure_n: u32,
+    /// RS data shard byte size (07c).
+    #[serde(default = "default_erasure_data_shard_size")]
+    pub erasure_data_shard_size_bytes: u32,
+}
+
+fn default_erasure_k() -> u32 {
+    4
+}
+
+fn default_erasure_n() -> u32 {
+    6
+}
+
+fn default_erasure_data_shard_size() -> u32 {
+    32 * 1024
 }
 
 fn default_blob_chunk_size() -> u32 {
