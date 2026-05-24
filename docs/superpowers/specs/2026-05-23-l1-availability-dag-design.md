@@ -152,8 +152,8 @@ Invalid vertices: log + drop (no SM step). Metric: `vertex_cert_rejected_total`.
 | Plan file | Depends on |
 |-----------|------------|
 | [`2026-05-23-07a-l1-vertex-cert.md`](../plans/2026-05-23-07a-l1-vertex-cert.md) | 06b-L1 |
-| `2026-05-23-07b-l1-blob-custody.md` (future) | 07a |
-| `2026-05-23-07c-l1-erasure-da.md` (future) | 07b |
+| [`2026-05-23-07b-l1-blob-custody.md`](../plans/2026-05-23-07b-l1-blob-custody.md) | 07a |
+| [`2026-05-23-07c-l1-erasure-da.md`](../plans/2026-05-23-07c-l1-erasure-da.md) | 07b |
 
 ---
 

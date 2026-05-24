@@ -649,4 +649,4 @@ git commit -m "feat(sim): use dag crate for vertex certificates"
 - Erasure coding / causal-set RPC (07c)
 - Per-node distributed cert protocol (devnet central multi-sign OK for 07a)
 
-**Next:** [`2026-05-23-07b-l1-blob-custody.md`](./2026-05-23-07b-l1-blob-custody.md) (to be written after 07a lands)
+**Next:** [`2026-05-23-07b-l1-blob-custody.md`](./2026-05-23-07b-l1-blob-custody.md) (07b — payload + custody + chunk wire)
