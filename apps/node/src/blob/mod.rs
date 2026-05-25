@@ -2,7 +2,7 @@
 
 mod rocks_store;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use dag::blob::chunk::{erasure_chunks, split_payload, BlobChunk, ChunkPayload};
@@ -12,7 +12,7 @@ use dag::blob::store::BlobStore;
 use dag::erasure::{encode_shards, rs_merkle_commitment, ErasureConfig};
 use net::gossip::Topic;
 use net::gossip_wire::encode_blob_chunk;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use types::{crypto_types::Hash32, dag::ChunkRef, primitives::BlobId};
 
 use crate::observability::metrics::Metrics;
@@ -36,6 +36,14 @@ pub struct BlobCustodyHandle {
     publish_tx: mpsc::Sender<(Topic, Vec<u8>)>,
     config: BlobCustodyConfig,
     metrics: Arc<Metrics>,
+}
+
+impl std::fmt::Debug for BlobCustodyHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlobCustodyHandle")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl BlobCustodyHandle {

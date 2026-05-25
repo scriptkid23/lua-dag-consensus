@@ -83,7 +83,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     // Storage.
     let db = Arc::new(Database::open(&cfg.storage)?);
     let persistence = RocksPersistence::new(Arc::clone(&db));
-    let live_dag = Arc::new(LiveDag::new(db));
+    let live_dag = Arc::new(LiveDag::new(Arc::clone(&db)));
 
     // Observability.
     let metrics = Arc::new(Metrics::new()?);

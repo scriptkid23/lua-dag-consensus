@@ -8,7 +8,7 @@
 
 use crypto::hash::{blake3_with_dst, dst};
 use types::{
-    crypto_types::{BlsPubkey, VrfPubkey},
+    crypto_types::VrfPubkey,
     primitives::{Epoch, StakeWeight, ValidatorId},
     validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet},
 };

@@ -198,7 +198,7 @@ impl L1Driver {
 #[must_use]
 pub fn demo_blob_payload(round: u64, chunk_size: u32) -> Vec<u8> {
     let seed = blake3_with_dst(dst::SIM_VERTEX_HASH, &round.to_be_bytes());
-    let len = usize::from(chunk_size) + 1024;
+    let len = chunk_size as usize + 1024;
     let mut payload = vec![0u8; len];
     payload[..32].copy_from_slice(seed.as_bytes());
     payload
