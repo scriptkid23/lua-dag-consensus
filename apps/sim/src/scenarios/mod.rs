@@ -10,6 +10,8 @@ pub mod anchor_dos;
 pub mod byzantine_split;
 pub mod equivocation_inject;
 pub mod happy_path;
+pub mod inactivity_leak;
+pub mod mode_a_subnet;
 pub mod mode_b_fallback;
 pub mod network_partition;
 
@@ -57,9 +59,11 @@ pub fn dispatch(args: &Args) -> Result<Report> {
         Scenario::HappyPath => happy_path::run(args.validators, args.rounds, seed),
         Scenario::AnchorDos => anchor_dos::run(args.validators, args.rounds, seed),
         Scenario::ModeBFallback => mode_b_fallback::run(args.validators, args.rounds, seed),
+        Scenario::ModeASubnet => mode_a_subnet::run(args.validators, args.rounds, seed),
         Scenario::EquivocationInject => {
             equivocation_inject::run(args.validators, args.rounds, seed)
         }
+        Scenario::InactivityLeak => inactivity_leak::run(args.validators, args.rounds, seed),
         Scenario::ByzantineSplit => byzantine_split::run(args.validators, args.rounds, seed),
         Scenario::NetworkPartition => network_partition::run(args.validators, args.rounds, seed),
     })

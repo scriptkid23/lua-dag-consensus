@@ -1,16 +1,21 @@
-//! JSON-RPC server placeholder. Real method registration arrives with
-//! `consensus::api::ConsensusQuery` wiring.
+//! JSON-RPC server with L3 read-only query methods (plan 06b-l3).
 
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{Json, Router, routing::post};
+use borsh::to_vec;
+use consensus::api::tier::BlobStatus;
+use consensus::api::query::ConsensusQuery;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
+use types::primitives::{BlobId, Height, Round};
+
+use crate::blob::BlobCustodyHandle;
+use crate::query::RocksConsensusQuery;
 
 /// JSON-RPC 2.0 request envelope.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct RpcReq {
     /// JSON-RPC version (must be `"2.0"`).
     pub jsonrpc: String,
@@ -30,27 +35,189 @@ pub struct RpcResp {
     pub jsonrpc: &'static str,
     /// Echoed request id.
     pub id: serde_json::Value,
-    /// Result (skeleton always returns `null`).
+    /// Result payload.
     pub result: serde_json::Value,
 }
 
-async fn rpc(Json(req): Json<RpcReq>) -> Json<RpcResp> {
+#[derive(Clone)]
+struct RpcState {
+    query: Arc<RocksConsensusQuery>,
+    blob: Option<BlobCustodyHandle>,
+}
+
+async fn rpc(
+    axum::extract::State(state): axum::extract::State<RpcState>,
+    Json(req): Json<RpcReq>,
+) -> Json<RpcResp> {
     info!(target: "node::rpc", method = %req.method, "rpc method invoked");
-    // Skeleton: every method returns null.
+    let result = match req.method.as_str() {
+        "lua_getLatestFinalized" => latest_finalized(&state.query),
+        "lua_getMacroCheckpointAt" => macro_checkpoint_at(&state.query, &req.params),
+        "lua_getBlobStatus" => blob_status_at(&state.query, &req.params),
+        "lua_submitBlob" => submit_blob(&state.blob, &req.params).await,
+        "lua_getCausalSet" => causal_set(&state.query, &req.params),
+        "lua_listBlobChunks" => list_blob_chunks(&state.blob, &req.params),
+        _ => serde_json::Value::Null,
+    };
     Json(RpcResp {
         jsonrpc: "2.0",
         id: req.id,
-        result: serde_json::Value::Null,
+        result,
     })
+}
+
+fn latest_finalized(query: &RocksConsensusQuery) -> serde_json::Value {
+    match query.latest_finalized() {
+        Ok(Some(qc)) => {
+            let mode = format!("{:?}", qc.mode);
+            serde_json::json!({
+                "checkpoint_hash": hex::encode(qc.checkpoint_hash.0),
+                "mode": mode,
+            })
+        }
+        Ok(None) => serde_json::Value::Null,
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "latest_finalized query failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn macro_checkpoint_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let Some(height_raw) = params.get(0).and_then(|v| v.as_u64()) else {
+        return serde_json::Value::Null;
+    };
+    let height = Height(height_raw);
+    match query.macro_checkpoint_at(height) {
+        Ok(Some(cp)) => match to_vec(&cp) {
+            Ok(bytes) => serde_json::json!({
+                "height": height_raw,
+                "checkpoint_borsh_hex": hex::encode(bytes),
+            }),
+            Err(e) => {
+                warn!(target: "node::rpc", error = %e, "macro checkpoint encode failed");
+                serde_json::Value::Null
+            }
+        },
+        Ok(None) => serde_json::Value::Null,
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "macro_checkpoint_at query failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn blob_status_wire_name(status: BlobStatus) -> &'static str {
+    match status {
+        BlobStatus::Accepted => "accepted",
+        BlobStatus::SoftConfirmed => "soft_confirmed",
+        BlobStatus::Justified => "justified",
+        BlobStatus::Finalized => "finalized",
+        BlobStatus::EpochFinalized => "epoch_finalized",
+    }
+}
+
+fn blob_status_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let Some(hex_raw) = params.get(0).and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let hex_str = hex_raw.strip_prefix("0x").unwrap_or(hex_raw);
+    let Ok(bytes) = hex::decode(hex_str) else {
+        return serde_json::Value::Null;
+    };
+    if bytes.len() != 32 {
+        return serde_json::Value::Null;
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    let blob = BlobId(id);
+    match query.blob_status(&blob) {
+        Ok(status) => serde_json::json!({
+            "blob_id": format!("0x{}", hex::encode(id)),
+            "status": blob_status_wire_name(status),
+        }),
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "blob_status query failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+async fn submit_blob(
+    blob: &Option<BlobCustodyHandle>,
+    params: &serde_json::Value,
+) -> serde_json::Value {
+    let Some(custody) = blob else {
+        return serde_json::Value::Null;
+    };
+    let Some(hex_raw) = params.get("payload_hex").and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let hex_str = hex_raw.strip_prefix("0x").unwrap_or(hex_raw);
+    let Ok(payload) = hex::decode(hex_str) else {
+        return serde_json::Value::Null;
+    };
+    let size_bytes = u64::try_from(payload.len()).unwrap_or(0);
+    let chunk_count = custody.unit_count_for(size_bytes);
+    match custody.publish_payload(payload).await {
+        Ok(blob_id) => serde_json::json!({
+            "blob_id": format!("0x{}", hex::encode(blob_id.0)),
+            "chunk_count": chunk_count,
+        }),
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "lua_submitBlob failed");
+            serde_json::Value::Null
+        }
+    }
+}
+
+fn causal_set(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+    let from = params.get("from").and_then(|v| v.as_u64()).unwrap_or(0);
+    let to = params.get("to").and_then(|v| v.as_u64()).unwrap_or(from);
+    let hashes = query.causal_set(Round(from), Round(to));
+    serde_json::json!({
+        "hashes": hashes.iter().map(|h| format!("0x{}", hex::encode(h.0))).collect::<Vec<_>>(),
+    })
+}
+
+fn list_blob_chunks(blob: &Option<BlobCustodyHandle>, params: &serde_json::Value) -> serde_json::Value {
+    let Some(custody) = blob else {
+        return serde_json::Value::Null;
+    };
+    let Some(hex_raw) = params.get("blob_id").and_then(|v| v.as_str()) else {
+        return serde_json::Value::Null;
+    };
+    let hex_str = hex_raw.strip_prefix("0x").unwrap_or(hex_raw);
+    let Ok(bytes) = hex::decode(hex_str) else {
+        return serde_json::Value::Null;
+    };
+    if bytes.len() != 32 {
+        return serde_json::Value::Null;
+    }
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&bytes);
+    let blob_id = BlobId(id);
+    match custody.list_chunk_refs(&blob_id) {
+        Ok(chunks) => serde_json::json!({
+            "chunks": chunks.iter().map(|c| serde_json::json!({ "index": c.index })).collect::<Vec<_>>(),
+        }),
+        Err(e) => {
+            warn!(target: "node::rpc", error = %e, "lua_listBlobChunks failed");
+            serde_json::Value::Null
+        }
+    }
 }
 
 /// Start the JSON-RPC HTTP server.
 pub async fn serve(
     addr: &str,
+    query: Arc<RocksConsensusQuery>,
+    blob: Option<BlobCustodyHandle>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let socket: SocketAddr = SocketAddr::from_str(addr)?;
-    let app = Router::new().route("/", post(rpc));
+    let state = RpcState { query, blob };
+    let app = Router::new().route("/", post(rpc)).with_state(state);
     let listener = TcpListener::bind(socket).await?;
     info!(target: "node::rpc", "rpc listening on {addr}");
     tokio::spawn(async move {

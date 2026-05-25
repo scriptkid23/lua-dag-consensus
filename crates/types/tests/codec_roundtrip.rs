@@ -3,7 +3,7 @@
 //! If a new wire type is added to `crates/types/`, add a case here.
 
 use types::{
-    crypto_types::{BlsAggSig, BlsPubkey, BlsSig, Hash32, Pop, VrfProof},
+    crypto_types::{BlsAggSig, BlsPubkey, BlsSig, Hash32, Pop, VrfProof, VrfPubkey},
     dag::{BlobRef, CertifiedVertex, ChunkRef, Vertex},
     macros::{AggregationMode, MacroCheckpoint, MacroHeader, MacroProposal, MacroQc},
     micro::{MicroCheckpoint, MicroQc},
@@ -128,6 +128,7 @@ fn validator_types_round_trip() {
     let entry = ValidatorEntry {
         id: ValidatorId([1; 32]),
         bls_pubkey: BlsPubkey([2; 48]),
+        vrf_pubkey: VrfPubkey::zero(),
         stake: StakeWeight(1000),
         identity: ValidatorIdentity {
             asn: Some(13335),
@@ -168,14 +169,18 @@ fn slashing_evidence_round_trip() {
         a_source: Epoch(1),
         a_target: Epoch(10),
         a_sig: BlsSig([0; 96]),
+        a_checkpoint: Hash32([0xAA; 32]),
         b_source: Epoch(3),
         b_target: Epoch(8),
         b_sig: BlsSig([0; 96]),
+        b_checkpoint: Hash32([0xBB; 32]),
     }));
     round_trip(&SlashEvidence::DoubleVote(DoubleVote {
         validator: ValidatorId([1; 32]),
         target: Epoch(5),
+        a_checkpoint: Hash32([0xCC; 32]),
         a_sig: BlsSig([0; 96]),
+        b_checkpoint: Hash32([0xDD; 32]),
         b_sig: BlsSig([1; 96]),
     }));
 }

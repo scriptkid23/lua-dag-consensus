@@ -40,6 +40,20 @@ pub mod dst {
     pub const VALIDATOR_BLS_PARTIAL: &[u8] = b"lua-dag/v1/validator-bls-partial";
     /// Macro proposer signature (L3 03c-1 fixture).
     pub const MACRO_PROPOSER_SIG: &[u8] = b"lua-dag/v1/macro-proposer-sig";
+    /// Production vertex content hash (L1 07a).
+    pub const VERTEX_HASH: &[u8] = b"lua-dag/v1/vertex-hash";
+    /// BLS quorum certificate domain for certified vertices (L1 07a).
+    pub const VERTEX_CERT: &[u8] = b"lua-dag/v1/vertex-cert";
+    /// Content-addressed blob identifier (L1 07b).
+    pub const BLOB_ID: &[u8] = b"lua-dag/v1/blob-id";
+    /// Payload commitment for BlobRef (L1 07b; RS/KZG deferred to 07c).
+    pub const BLOB_COMMIT: &[u8] = b"lua-dag/v1/blob-commit";
+    /// Per-shard hash leaf for RS merkle tree (L1 07c).
+    pub const BLOB_SHARD: &[u8] = b"lua-dag/v1/blob-shard";
+    /// RS merkle root commitment for BlobRef (L1 07c).
+    pub const BLOB_RS_ROOT: &[u8] = b"lua-dag/v1/blob-rs-root";
+    /// Internal merkle node combiner (L1 07c).
+    pub const BLOB_MERKLE_NODE: &[u8] = b"lua-dag/v1/blob-merkle-node";
 }
 
 /// Blake3-256 over `data` with a DST prefix.
@@ -131,6 +145,13 @@ mod tests {
             dst::MACRO_MICRO_ROOT,
             dst::VALIDATOR_BLS_PARTIAL,
             dst::MACRO_PROPOSER_SIG,
+            dst::VERTEX_HASH,
+            dst::VERTEX_CERT,
+            dst::BLOB_ID,
+            dst::BLOB_COMMIT,
+            dst::BLOB_SHARD,
+            dst::BLOB_RS_ROOT,
+            dst::BLOB_MERKLE_NODE,
         ];
         let set: HashSet<&[u8]> = ids.iter().copied().collect();
         assert_eq!(set.len(), ids.len(), "DST registry has a duplicate");

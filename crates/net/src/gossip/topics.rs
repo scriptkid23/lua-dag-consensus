@@ -23,6 +23,8 @@ pub mod wire {
     pub const MACRO_QC: &str = "lua-dag/v1/macro-qc";
     /// Slashing evidence broadcast.
     pub const SLASH_EVIDENCE: &str = "lua-dag/v1/slash-evidence";
+    /// Sequential blob payload chunk stream (L1 07b).
+    pub const BLOB_CHUNK: &str = "lua-dag/v1/blob-chunk";
 }
 
 /// All gossip topics used by LUA-DAG.
@@ -42,6 +44,8 @@ pub enum Topic {
     MacroQc,
     /// Slashing evidence broadcast.
     SlashEvidence,
+    /// Sequential blob payload chunk stream (L1 07b).
+    BlobChunk,
 }
 
 impl Topic {
@@ -56,6 +60,7 @@ impl Topic {
             Self::SubnetAggregate => wire::SUBNET_AGGREGATE.to_string(),
             Self::MacroQc => wire::MACRO_QC.to_string(),
             Self::SlashEvidence => wire::SLASH_EVIDENCE.to_string(),
+            Self::BlobChunk => wire::BLOB_CHUNK.to_string(),
         }
     }
 
@@ -69,6 +74,7 @@ impl Topic {
             wire::SUBNET_AGGREGATE => Some(Self::SubnetAggregate),
             wire::MACRO_QC => Some(Self::MacroQc),
             wire::SLASH_EVIDENCE => Some(Self::SlashEvidence),
+            wire::BLOB_CHUNK => Some(Self::BlobChunk),
             s if s.starts_with(wire::BLS_PARTIAL_PREFIX) => {
                 let rest = s.strip_prefix(wire::BLS_PARTIAL_PREFIX)?;
                 let id = rest.parse().ok()?;
@@ -104,6 +110,7 @@ mod tests {
             Topic::SubnetAggregate,
             Topic::MacroQc,
             Topic::SlashEvidence,
+            Topic::BlobChunk,
         ]
         .map(|t| t.ident().to_string());
         let mut sorted = names.to_vec();
@@ -121,6 +128,7 @@ mod tests {
             Topic::SubnetAggregate,
             Topic::MacroQc,
             Topic::SlashEvidence,
+            Topic::BlobChunk,
         ] {
             let name = topic.wire_name();
             assert_eq!(Topic::from_wire_name(&name), Some(topic), "{name}");

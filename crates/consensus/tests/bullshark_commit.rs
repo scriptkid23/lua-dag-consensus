@@ -142,6 +142,7 @@ fn fixture_validator_set(n: u32) -> ValidatorSet {
         entries.push(ValidatorEntry {
             id: validator_id(i),
             bls_pubkey: BlsPubkey([0; 48]),
+            vrf_pubkey: types::crypto_types::VrfPubkey::zero(),
             stake: StakeWeight(1_000),
             identity: ValidatorIdentity {
                 asn: None,
@@ -208,6 +209,7 @@ fn host_context<'a>(
     clock: &'a TestClock,
     valset: &'a TestValset,
     persist: &'a NoopPersistence,
+    signer: &'a consensus::ports::PanickingSigner,
 ) -> HostContext<'a> {
     HostContext {
         dag,
@@ -215,6 +217,7 @@ fn host_context<'a>(
         valset,
         beacon: beacon as &dyn RandomnessBeacon,
         persistence: persist,
+        signer,
     }
 }
 
@@ -226,6 +229,7 @@ fn shortcut_commits_when_window_has_2f_plus_1_supporters() {
     let clock = TestClock;
     let valset = TestValset(set.clone());
     let persist = NoopPersistence;
+    static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
     let mut cfg = Config::default_table_17_1();
     cfg.bullshark.shortcut_round_count = 4;
     cfg.timing.round_duration_ms = 1;
@@ -237,7 +241,7 @@ fn shortcut_commits_when_window_has_2f_plus_1_supporters() {
     )
     .unwrap();
     let dag = dag_with_full_window(n, 4, anchor_choice.author);
-    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist);
+    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist, &SIGNER);
     let decision = try_commit_wave(WaveId(0), &cfg, &set, &ctx, false)
         .unwrap()
         .expect("shortcut should fire when 2f+1 supporters exist");
@@ -260,10 +264,11 @@ fn no_commit_when_anchor_missing() {
     let clock = TestClock;
     let valset = TestValset(set.clone());
     let persist = NoopPersistence;
+    static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
     let cfg = Config::default_table_17_1();
     // Empty DAG: anchor vertex absent.
     let dag = HashMapDag::new();
-    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist);
+    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist, &SIGNER);
     let decision = try_commit_wave(WaveId(0), &cfg, &set, &ctx, false).unwrap();
     assert!(decision.is_none());
     let decision_timed = try_commit_wave(WaveId(0), &cfg, &set, &ctx, true).unwrap();
@@ -278,6 +283,7 @@ fn slow_path_commits_only_after_timeout() {
     let clock = TestClock;
     let valset = TestValset(set.clone());
     let persist = NoopPersistence;
+    static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
     let mut cfg = Config::default_table_17_1();
     // Shortcut window of 1 round, slow window of 3 rounds. Anchor support
     // arrives only in round 3 — shortcut never fires; slow path requires
@@ -313,7 +319,7 @@ fn slow_path_commits_only_after_timeout() {
         dag.insert(build_vertex(3, p, vec![anchor_hash]));
     }
 
-    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist);
+    let ctx = host_context(&dag, &beacon, &clock, &valset, &persist, &SIGNER);
 
     // Without timeout: shortcut window (round 1 only) has zero supporters.
     let shortcut_attempt = try_commit_wave(WaveId(0), &cfg, &set, &ctx, false).unwrap();

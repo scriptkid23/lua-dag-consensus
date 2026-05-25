@@ -81,6 +81,11 @@ jobs:
             curl -fsS http://127.0.0.1:$port/readyz
           done
 
+      - name: E2E — poll RPC until macro finality
+        run: |
+          chmod +x scripts/devnet_e2e_smoke.sh
+          FINALIZE_TIMEOUT_SECS=300 ./scripts/devnet_e2e_smoke.sh
+
       - name: docker compose down
         if: always()
         run: docker compose down -v

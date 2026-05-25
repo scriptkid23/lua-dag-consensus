@@ -7,14 +7,21 @@
 
 #![cfg_attr(not(test), warn(missing_docs))]
 
+pub mod blob;
+pub mod action_applier;
 pub mod args;
 pub mod config;
 pub mod config_layers;
+pub mod devnet_keys;
 pub mod host_context;
+pub mod l1;
+pub mod live_dag;
 pub mod observability;
 pub mod orchestrator;
+pub mod query;
 pub mod rpc_server;
 pub mod runtime;
+pub mod signer;
 pub mod shutdown;
 pub mod timer;
 pub mod validator_set_loader;

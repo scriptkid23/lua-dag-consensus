@@ -45,6 +45,7 @@ impl ValidatorSetPort for MinimalValset {
                     ValidatorEntry {
                         id: ValidatorId(id),
                         bls_pubkey: BlsPubkey([0; 48]),
+                        vrf_pubkey: types::crypto_types::VrfPubkey::zero(),
                         stake: StakeWeight(1),
                         identity: ValidatorIdentity {
                             asn: None,
@@ -100,12 +101,14 @@ fn test_host_context() -> HostContext<'static> {
     static VALSET: MinimalValset = MinimalValset;
     static BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
     static PERSIST: NoopPersistence = NoopPersistence;
+    static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
     HostContext {
         dag: &DAG,
         clock: &CLOCK,
         valset: &VALSET,
         beacon: &BEACON,
         persistence: &PERSIST,
+        signer: &SIGNER,
     }
 }
 
@@ -192,7 +195,9 @@ fn step_returns_empty_for_non_l2_events_with_empty_dag() {
         Event::SlashEvidenceFound(SlashEvidence::DoubleVote(DoubleVote {
             validator: ValidatorId([0; 32]),
             target: Epoch(0),
+            a_checkpoint: Hash32([1; 32]),
             a_sig: BlsSig([0; 96]),
+            b_checkpoint: Hash32([2; 32]),
             b_sig: BlsSig([1; 96]),
         })),
     ];

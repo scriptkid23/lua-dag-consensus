@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use consensus::action::Action;
 use consensus::event::{Event, SubnetId};
+use dag::blob::chunk::BlobChunk;
 use futures::StreamExt;
 use libp2p::{
     Multiaddr, PeerId, Swarm,
@@ -47,6 +48,8 @@ pub struct GossipSpawn {
     pub local_peer_id: PeerId,
     /// Inbound events decoded from gossip; the orchestrator reads from this.
     pub events_rx: mpsc::Receiver<Event>,
+    /// Pre-encoded gossip payloads from the L1 driver (CertifiedVertex publish path).
+    pub publish_tx: mpsc::Sender<(Topic, Vec<u8>)>,
     /// Readiness signal — flips `true` once every listen addr has bound.
     pub ready: watch::Receiver<bool>,
     /// Snapshot of every `NewListenAddr` the swarm has reported. Useful for
@@ -69,6 +72,7 @@ pub async fn spawn_gossip_tasks(
     keypair: Keypair,
     net_cfg: NetConfig,
     mut actions_rx: mpsc::Receiver<Action>,
+    blob_chunks_tx: Option<mpsc::Sender<BlobChunk>>,
 ) -> Result<GossipSpawn> {
     let transport =
         build_transport_tcp_only(&keypair).context("build TCP+Noise+Yamux transport")?;
@@ -86,7 +90,7 @@ pub async fn spawn_gossip_tasks(
         gossipsub::Behaviour::new(MessageAuthenticity::Signed(keypair.clone()), gossip_cfg)
             .map_err(|e| anyhow::anyhow!("gossipsub behaviour: {e}"))?;
 
-    for topic in subscribe_set() {
+    for topic in subscribe_set(net_cfg.macro_subnet_count) {
         gossipsub
             .subscribe(&topic.ident())
             .with_context(|| format!("subscribe {topic:?}"))?;
@@ -129,6 +133,7 @@ pub async fn spawn_gossip_tasks(
     }
 
     let (events_tx, events_rx) = mpsc::channel::<Event>(EVENT_BUFFER);
+    let (publish_tx, mut publish_rx) = mpsc::channel::<(Topic, Vec<u8>)>(EVENT_BUFFER);
     let (ready_tx, ready_rx) = watch::channel(false);
     let (listen_tx, listen_rx) = watch::channel(Vec::<Multiaddr>::new());
 
@@ -229,28 +234,56 @@ pub async fn spawn_gossip_tasks(
                     }
                     SwarmEvent::Behaviour(DevnetBehaviourEvent::Gossipsub(gs_ev)) => match gs_ev {
                         gossipsub::Event::Message { message, .. } => {
-                            match gossip_wire::inbound_message(message.topic.as_str(), &message.data)
-                            {
-                                Ok(Some(event)) => {
-                                    match events_tx.try_send(event) {
-                                        Ok(()) => {}
-                                        Err(mpsc::error::TrySendError::Full(_)) => {
-                                            tracing::warn!(
-                                                target: "net::swarm",
-                                                "swarm event buffer full; dropping inbound gossip event",
-                                            );
-                                        }
-                                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                                            tracing::warn!(
-                                                target: "net::swarm",
-                                                "events_rx dropped; shutting swarm task",
-                                            );
-                                            break;
+                            match gossip_wire::decode_blob_chunk(
+                                message.topic.as_str(),
+                                &message.data,
+                            ) {
+                                Ok(Some(chunk)) => {
+                                    if let Some(tx) = &blob_chunks_tx {
+                                        match tx.try_send(chunk) {
+                                            Ok(()) => {}
+                                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                                tracing::warn!(
+                                                    target: "net::swarm",
+                                                    "blob chunk buffer full; dropping inbound chunk",
+                                                );
+                                            }
+                                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                                tracing::warn!(
+                                                    target: "net::swarm",
+                                                    "blob_chunks_rx dropped; shutting swarm task",
+                                                );
+                                                break;
+                                            }
                                         }
                                     }
                                 }
-                                Ok(None) => {} // topic recognized but no Event mapping yet
-                                Err(e) => tracing::warn!(error = %e, "inbound decode failed"),
+                                Ok(None) => match gossip_wire::inbound_message(
+                                    message.topic.as_str(),
+                                    &message.data,
+                                ) {
+                                    Ok(Some(event)) => {
+                                        match events_tx.try_send(event) {
+                                            Ok(()) => {}
+                                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                                tracing::warn!(
+                                                    target: "net::swarm",
+                                                    "swarm event buffer full; dropping inbound gossip event",
+                                                );
+                                            }
+                                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                                tracing::warn!(
+                                                    target: "net::swarm",
+                                                    "events_rx dropped; shutting swarm task",
+                                                );
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => tracing::warn!(error = %e, "inbound decode failed"),
+                                },
+                                Err(e) => tracing::warn!(error = %e, "blob chunk decode failed"),
                             }
                         }
                         gossipsub::Event::Subscribed { peer_id, topic } => {
@@ -308,6 +341,18 @@ pub async fn spawn_gossip_tasks(
                         Err(e) => tracing::warn!(error = %e, ?action, "outbound encode failed"),
                     },
                 },
+                maybe_publish = publish_rx.recv() => match maybe_publish {
+                    None => break,
+                    Some((topic, payload)) => {
+                        if let Err(e) = swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish(topic.ident(), payload)
+                        {
+                            tracing::warn!(error = %e, ?topic, "gossipsub publish failed (L1 driver)");
+                        }
+                    }
+                },
             }
         }
     });
@@ -315,22 +360,33 @@ pub async fn spawn_gossip_tasks(
     Ok(GossipSpawn {
         local_peer_id,
         events_rx,
+        publish_tx,
         ready: ready_rx,
         listen_addrs: listen_rx,
         handle,
     })
 }
 
-fn subscribe_set() -> [Topic; 7] {
-    [
+fn subscribe_set(macro_subnet_count: u32) -> Vec<Topic> {
+    let mut topics = vec![
         Topic::CertifiedVertex,
         Topic::MicroQc,
         Topic::MacroProposal,
         Topic::SubnetAggregate,
         Topic::MacroQc,
         Topic::SlashEvidence,
-        Topic::BlsPartial(SubnetId(0)),
-    ]
+        Topic::BlobChunk,
+    ];
+    // Flat mode uses subnet 0; Mode A subscribes 0..K_e.
+    let partial_count = if macro_subnet_count == 0 {
+        1
+    } else {
+        macro_subnet_count
+    };
+    for i in 0..partial_count {
+        topics.push(Topic::BlsPartial(SubnetId(i)));
+    }
+    topics
 }
 
 fn strip_p2p(addr: &Multiaddr) -> Multiaddr {

@@ -40,10 +40,70 @@ pub struct NodeSection {
     pub network_mode: String,
     /// `[node.identity]` — how this node's key material is sourced.
     pub identity: NodeIdentityToml,
+    /// Path to the bootstrap validator set TOML (relative to repo root or absolute).
+    #[serde(default = "default_validator_set_path")]
+    pub validator_set_path: PathBuf,
+    /// When true, `network_mode=live` no longer requires `--allow-skeleton-network` for L3.
+    #[serde(default)]
+    pub l3_wire_complete: bool,
+    /// When true, spawn the local L1 certified-vertex driver (plan 06b-L1).
+    #[serde(default)]
+    pub l1_driver_enabled: bool,
+    /// When true, build real BLS quorum certs via `dag::cert` (07a).
+    #[serde(default)]
+    pub l1_real_vertex_certs: bool,
+    /// When true, spawn blob chunk custody + gossip ingress (07b).
+    #[serde(default)]
+    pub l1_blob_custody_enabled: bool,
+    /// Fixed chunk size for blob payload splitting (07b).
+    #[serde(default = "default_blob_chunk_size")]
+    pub blob_chunk_size_bytes: u32,
+    /// When true, L1 driver attaches a synthetic demo blob on schedule (07b).
+    #[serde(default)]
+    pub l1_demo_blob_enabled: bool,
+    /// Attach demo blob every N virtual rounds when demo blob is enabled (07b).
+    #[serde(default = "default_demo_blob_every")]
+    pub demo_blob_every_n_rounds: u64,
+    /// When true, publish RS erasure shards instead of sequential chunks (07c).
+    #[serde(default)]
+    pub l1_erasure_enabled: bool,
+    /// RS data shard count (07c).
+    #[serde(default = "default_erasure_k")]
+    pub erasure_k: u32,
+    /// RS total shard count (07c).
+    #[serde(default = "default_erasure_n")]
+    pub erasure_n: u32,
+    /// RS data shard byte size (07c).
+    #[serde(default = "default_erasure_data_shard_size")]
+    pub erasure_data_shard_size_bytes: u32,
+}
+
+fn default_erasure_k() -> u32 {
+    4
+}
+
+fn default_erasure_n() -> u32 {
+    6
+}
+
+fn default_erasure_data_shard_size() -> u32 {
+    32 * 1024
+}
+
+fn default_blob_chunk_size() -> u32 {
+    65_536
+}
+
+fn default_demo_blob_every() -> u64 {
+    8
 }
 
 fn default_network_mode() -> String {
     "live".into()
+}
+
+fn default_validator_set_path() -> PathBuf {
+    PathBuf::from("config/valsets/devnet-4.toml")
 }
 
 /// `[node.identity]` — kind plus a textual label used by deterministic key derivation.

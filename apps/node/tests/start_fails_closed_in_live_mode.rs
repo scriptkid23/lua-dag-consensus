@@ -1,10 +1,4 @@
-//! Spec §8 — the default `devnet` profile must fail closed if the swarm
-//! cannot claim a listen socket and `--allow-skeleton-network` was not
-//! passed.
-//!
-//! Exercises `node::runtime::test_helpers::run_for_test` against the real
-//! gate body so a regression that bypasses the check (e.g. moving the gate
-//! after swarm init) is caught.
+//! Spec §8 — live mode gate respects `l3_wire_complete` (plan 06b-l3).
 
 use std::path::PathBuf;
 
@@ -19,10 +13,12 @@ fn write(dir: &std::path::Path, rel: &str, body: &str) -> PathBuf {
     p
 }
 
-fn empty_listen_profile() -> &'static str {
-    r#"
+fn live_profile(l3_wire_complete: bool) -> String {
+    format!(
+        r#"
 [node]
 network_mode = "live"
+l3_wire_complete = {l3_wire_complete}
 
 [node.identity]
 kind = "devnet_seed"
@@ -42,19 +38,23 @@ mesh_n_high = 12
 max_peers = 64
 ban_duration_secs = 600
 "#
+    )
 }
 
-fn write_layered(dir: &std::path::Path) {
-    // Base consensus config (Table 17.1).
+fn write_layered(dir: &std::path::Path, l3_wire_complete: bool) {
     let default = consensus::Config::default_table_17_1();
     write(dir, "default.toml", &toml::to_string(&default).unwrap());
-    write(dir, "profiles/devnet.toml", empty_listen_profile());
+    write(
+        dir,
+        "profiles/devnet.toml",
+        &live_profile(l3_wire_complete),
+    );
 }
 
 #[tokio::test]
-async fn live_mode_without_skeleton_flag_refuses_to_start() {
+async fn live_mode_without_l3_wire_complete_refuses_to_start() {
     let dir = tempdir().unwrap();
-    write_layered(dir.path());
+    write_layered(dir.path(), false);
 
     let result = node::runtime::test_helpers::run_for_test(node::runtime::test_helpers::TestArgs {
         config_dir: dir.path().to_path_buf(),
@@ -63,18 +63,33 @@ async fn live_mode_without_skeleton_flag_refuses_to_start() {
     })
     .await;
 
-    let err = result.expect_err("must refuse to start in live mode with empty listen");
+    let err = result.expect_err("must refuse when l3_wire_complete=false");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("allow-skeleton-network") && msg.contains("06b"),
+        msg.contains("l3_wire_complete") || msg.contains("allow-skeleton-network"),
         "unexpected error: {msg}"
     );
 }
 
 #[tokio::test]
+async fn live_mode_passes_gate_when_l3_wire_complete() {
+    let dir = tempdir().unwrap();
+    write_layered(dir.path(), true);
+
+    let result = node::runtime::test_helpers::run_for_test(node::runtime::test_helpers::TestArgs {
+        config_dir: dir.path().to_path_buf(),
+        profile: "devnet".into(),
+        allow_skeleton_network: false,
+    })
+    .await;
+
+    result.expect("live mode should pass gate when l3_wire_complete=true");
+}
+
+#[tokio::test]
 async fn allow_skeleton_network_bypasses_the_gate() {
     let dir = tempdir().unwrap();
-    write_layered(dir.path());
+    write_layered(dir.path(), false);
 
     let result = node::runtime::test_helpers::run_for_test(node::runtime::test_helpers::TestArgs {
         config_dir: dir.path().to_path_buf(),
@@ -83,9 +98,6 @@ async fn allow_skeleton_network_bypasses_the_gate() {
     })
     .await;
 
-    // The gate must not be the failure mode here. The helper does not start
-    // the orchestrator, so success is `Ok(())`; any other error must NOT
-    // mention the listen guard.
     if let Err(err) = result {
         let msg = format!("{err:#}");
         assert!(

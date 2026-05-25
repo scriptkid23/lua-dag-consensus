@@ -109,11 +109,13 @@ pub fn replay_host_context() -> HostContext<'static> {
     static VALSET: EmptyValidatorSet = EmptyValidatorSet;
     static BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
     static PERSIST: NoopPersistence = NoopPersistence;
+    static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
     HostContext {
         dag: &DAG,
         clock: &CLOCK,
         valset: &VALSET,
         beacon: &BEACON,
         persistence: &PERSIST,
+        signer: &SIGNER,
     }
 }

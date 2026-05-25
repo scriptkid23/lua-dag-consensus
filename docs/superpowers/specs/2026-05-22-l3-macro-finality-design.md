@@ -1,7 +1,7 @@
 # Design: Milestone B — L3 Macro-Finality on `sim` (phased 03c-1 / 03c-2)
 
 **Date:** 2026-05-22
-**Status:** Draft (awaiting review)
+**Status:** 03c-2 landed; 03d landed; 06b-l3 landed; **03d+ landed**; **06b-L1 landed**; **BlobStatus persist landed** (see [`2026-05-23-blob-status-persist.md`](../plans/2026-05-23-blob-status-persist.md))
 **Audience:** Contributors implementing macro-finality + sim driver
 **Relations:** Extends [`2026-05-11-folder-architecture-design.md`](2026-05-11-folder-architecture-design.md) and [`2026-05-19-l2-sim-milestone-a-design.md`](2026-05-19-l2-sim-milestone-a-design.md). Does **not** include `T_macropropose` backup proposer, Mode A subnet rotation, Mode B leaderless fallback, real BLS sign/verify, surround/double-vote detection, inactivity leak, or L4 BTC anchor — those are 03c-2 and 03d.
 
@@ -72,14 +72,17 @@ StateMachine {
 | ID | Path | Depends on |
 |----|------|------------|
 | **03c-1** | `docs/superpowers/plans/2026-05-22-03c1-l3-minimal-sim.md` | L2 Milestone A complete |
-| **03c-2** | `docs/superpowers/plans/2026-05-XX-03c2-l3-full.md` *(written after 03c-1 lands)* | 03c-1 complete |
+| **03c-2** | `docs/superpowers/plans/2026-05-22-03c2-l3-full.md` | 03c-1 complete |
+| **03d** | `docs/superpowers/plans/2026-05-22-03d-l3-crypto-slashing.md` | 03c-2 complete |
+| **03d+** | `docs/superpowers/plans/2026-05-22-03d-plus-inactivity-leak.md` | 03d complete |
+| **06b-l3** | `docs/superpowers/plans/2026-05-22-06b-l3-node-production.md` | 03d complete |
 
-Out of scope for Milestone B, listed for ordering only:
+Follow-on (not Milestone B core):
 
 | ID | Topic |
 |----|-------|
-| **03d** | Surround / double-vote detection, real BLS, inactivity leak |
-| **06b-l3** | `node`: timer dispatcher for `T_macropropose`, `PersistMacroQc` → `RocksPersistence` (already wired), RPC visibility of finalized heads |
+| **06b-L1** | [`2026-05-23-06b-l1-vertex-driver.md`](../plans/2026-05-23-06b-l1-vertex-driver.md) | 06b-l3 complete |
+| **L4** | BTC anchor, light-client sync |
 
 ---
 

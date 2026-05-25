@@ -151,6 +151,7 @@ impl VirtualNet {
             Action::BroadcastMacroProposal(p) => Event::MacroProposalReceived(p.clone()),
             Action::BroadcastBlsPartial(bp) => Event::BlsPartialReceived(bp.clone()),
             Action::BroadcastMacroQc(qc) => Event::MacroQcReceived(qc.clone()),
+            Action::BroadcastSubnetAggregate(a) => Event::SubnetAggregateReceived(a.clone()),
             _ => return,
         };
         for recipient in 0..validator_count {

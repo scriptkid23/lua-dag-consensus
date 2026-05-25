@@ -15,6 +15,20 @@ pub struct Metrics {
     pub events_dropped: IntCounter,
     /// Outbound broadcast actions dropped because the swarm queue was full.
     pub actions_dropped: IntCounter,
+    /// Inactivity leak notifications applied locally.
+    pub inactivity_leak_emitted: IntCounter,
+    /// Certified vertices rejected by the L1 cert verifier (07a).
+    pub vertex_cert_rejected: IntCounter,
+    /// Inbound blob chunks stored by custody.
+    pub blob_chunks_received: IntCounter,
+    /// Blob chunks published locally (submit / demo path).
+    pub blob_chunks_published: IntCounter,
+    /// Blobs that reached full local chunk custody.
+    pub blob_available: IntCounter,
+    /// Inbound blob chunks rejected by the store.
+    pub blob_chunk_rejected: IntCounter,
+    /// Vertex publish skipped because a listed blob is not locally available.
+    pub blob_custody_missing: IntCounter,
 }
 
 impl Metrics {
@@ -38,15 +52,57 @@ impl Metrics {
             "node_actions_dropped_total",
             "Outbound broadcast actions dropped due to a full swarm queue",
         )?;
+        let inactivity_leak_emitted = IntCounter::new(
+            "node_inactivity_leak_emitted_total",
+            "NotifyInactivityLeak actions applied by the node",
+        )?;
+        let vertex_cert_rejected = IntCounter::new(
+            "node_vertex_cert_rejected_total",
+            "Certified vertices rejected by the L1 BLS certificate verifier",
+        )?;
         registry.register(Box::new(actions_dispatched.clone()))?;
         registry.register(Box::new(events_dropped.clone()))?;
         registry.register(Box::new(actions_dropped.clone()))?;
+        registry.register(Box::new(inactivity_leak_emitted.clone()))?;
+        registry.register(Box::new(vertex_cert_rejected.clone()))?;
+        let blob_chunks_received = IntCounter::new(
+            "node_blob_chunks_received_total",
+            "Blob chunks ingested by custody from gossip or local publish",
+        )?;
+        let blob_chunks_published = IntCounter::new(
+            "node_blob_chunks_published_total",
+            "Blob chunks published locally via submit or demo path",
+        )?;
+        let blob_available = IntCounter::new(
+            "node_blob_available_total",
+            "Blobs that reached full local chunk custody",
+        )?;
+        let blob_chunk_rejected = IntCounter::new(
+            "node_blob_chunk_rejected_total",
+            "Inbound blob chunks rejected by the chunk store",
+        )?;
+        let blob_custody_missing = IntCounter::new(
+            "node_blob_custody_missing_total",
+            "Vertex blob refs skipped because payload is not locally available",
+        )?;
+        registry.register(Box::new(blob_chunks_received.clone()))?;
+        registry.register(Box::new(blob_chunks_published.clone()))?;
+        registry.register(Box::new(blob_available.clone()))?;
+        registry.register(Box::new(blob_chunk_rejected.clone()))?;
+        registry.register(Box::new(blob_custody_missing.clone()))?;
         Ok(Self {
             registry,
             events_processed,
             actions_dispatched,
             events_dropped,
             actions_dropped,
+            inactivity_leak_emitted,
+            vertex_cert_rejected,
+            blob_chunks_received,
+            blob_chunks_published,
+            blob_available,
+            blob_chunk_rejected,
+            blob_custody_missing,
         })
     }
 

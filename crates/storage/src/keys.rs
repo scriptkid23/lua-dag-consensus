@@ -5,7 +5,7 @@
 
 use types::{
     crypto_types::Hash32,
-    primitives::{Epoch, Height, Round, ValidatorId},
+    primitives::{BlobId, Epoch, Height, Round, ValidatorId},
 };
 
 /// `(round, author)` — 8 + 32 bytes.
@@ -39,6 +39,21 @@ pub fn epoch(e: Epoch) -> [u8; 8] {
 #[must_use]
 pub fn hash(h: &Hash32) -> [u8; 32] {
     *h.as_bytes()
+}
+
+/// `BlobId` key — 32 bytes.
+#[must_use]
+pub fn blob_id(id: &BlobId) -> [u8; 32] {
+    id.0
+}
+
+/// `(blob_id, chunk_index)` — 32 + 4 bytes.
+#[must_use]
+pub fn blob_chunk(blob_id: &BlobId, index: u32) -> [u8; 36] {
+    let mut out = [0u8; 36];
+    out[..32].copy_from_slice(&blob_id.0);
+    out[32..].copy_from_slice(&index.to_be_bytes());
+    out
 }
 
 /// `(validator, target_epoch)` — 32 + 8 bytes.

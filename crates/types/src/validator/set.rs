@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::ValidatorIdentity;
 use crate::{
-    crypto_types::BlsPubkey,
+    crypto_types::{BlsPubkey, VrfPubkey},
     primitives::{Epoch, StakeWeight, ValidatorId},
 };
 
@@ -19,6 +19,9 @@ pub struct ValidatorEntry {
     pub id: ValidatorId,
     /// BLS public key.
     pub bls_pubkey: BlsPubkey,
+    /// ECVRF public key (Edwards25519, 32 bytes).
+    #[serde(default)]
+    pub vrf_pubkey: VrfPubkey,
     /// Stake weight at the start of `epoch`.
     pub stake: StakeWeight,
     /// Optional diversity metadata.

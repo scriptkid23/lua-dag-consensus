@@ -1,12 +1,14 @@
 //! Owns all validator state machines and ticks them deterministically.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use consensus::{
     Config, HostContext, StateMachine,
     action::Action,
     bullshark::{WaveId, select_anchor},
-    ports::{Clock, DagView, Persistence, ValidatorSetPort},
+    leader::beacon::chain_beacon,
+    ports::{Clock, DagView, Persistence, RandomnessBeacon, SignerPort, ValidatorSetPort},
     state_machine::Actions,
 };
 use rand::SeedableRng;
@@ -18,7 +20,8 @@ use types::{
 };
 
 use crate::{
-    adversary::network::NetworkConditions, vertex_factory::build_quorum_vertices_for_round,
+    adversary::network::NetworkConditions, keys::ValidatorKeyRing,
+    vertex_factory::build_quorum_vertices_for_round,
     virtual_beacon::VirtualBeacon, virtual_clock::VirtualClock, virtual_dag::VirtualDag,
     virtual_net::VirtualNet, virtual_persistence::VirtualPersistence, virtual_timer::VirtualTimer,
     virtual_validator_set::VirtualValidatorSet,
@@ -51,6 +54,14 @@ pub struct World {
     pub timer: VirtualTimer,
     /// When set, anchor-round vertices are never inserted or delivered.
     pub anchor_withhold: bool,
+    /// Macro QC hashes that already advanced the shared beacon (chain once).
+    macro_qc_beacon_chained: HashSet<Hash32>,
+    /// Drop `MacroProposal` events from this proposer (Mode B adversary).
+    pub suppress_macro_proposer: Option<ValidatorId>,
+    /// Deterministic BLS/VRF keys aligned with validator indices.
+    key_ring: ValidatorKeyRing,
+    /// Count of `NotifyInactivityLeak` actions applied across all validators.
+    inactivity_leak_emitted: u32,
 }
 
 impl World {
@@ -58,8 +69,8 @@ impl World {
     #[must_use]
     pub fn new(n: u32, seed: [u8; 32], config: Config) -> Self {
         use crypto::hash::{blake3_with_dst, dst};
-        use types::crypto_types::BlsPubkey;
 
+        let key_ring = ValidatorKeyRing::from_seed(seed, n);
         let mut machines = Vec::with_capacity(n as usize);
         let mut entries = Vec::with_capacity(n as usize);
         for i in 0..n {
@@ -67,7 +78,8 @@ impl World {
             id[..4].copy_from_slice(&i.to_be_bytes());
             entries.push(ValidatorEntry {
                 id: ValidatorId(id),
-                bls_pubkey: BlsPubkey([0; 48]),
+                bls_pubkey: key_ring.bls_pubkey(i as usize),
+                vrf_pubkey: key_ring.vrf_pubkey(i as usize),
                 stake: StakeWeight(1_000),
                 identity: ValidatorIdentity {
                     asn: None,
@@ -100,7 +112,16 @@ impl World {
             virtual_round: 0,
             timer: VirtualTimer::new(),
             anchor_withhold: false,
+            macro_qc_beacon_chained: HashSet::new(),
+            suppress_macro_proposer: None,
+            key_ring,
+            inactivity_leak_emitted: 0,
         }
+    }
+
+    /// Suppress macro proposals from `proposer` (sim adversary).
+    pub fn suppress_macro_proposals_from(&mut self, proposer: ValidatorId) {
+        self.suppress_macro_proposer = Some(proposer);
     }
 
     /// Withhold the ECVRF anchor vertex each wave (simulates anchor `DoS`).
@@ -127,9 +148,66 @@ impl World {
         self.net.heal_partition();
     }
 
+    /// Deliver an event to one validator (adversary helper).
+    pub fn deliver_proposal(
+        &mut self,
+        recipient: u32,
+        event: consensus::Event,
+        now: u64,
+    ) {
+        self.step_validator(recipient, event, now);
+    }
+
+    /// Build a signed macro proposal for validator index `proposer_idx`.
+    pub fn signed_macro_proposal(
+        &self,
+        proposer_idx: u32,
+        checkpoint: types::macros::MacroCheckpoint,
+        beacon: Hash32,
+    ) -> types::macros::MacroProposal {
+        use consensus::macro_fin::{messages, proposer::vrf_alpha};
+        use crypto::hash::dst;
+        let set = self
+            .valset
+            .set_for(Epoch(0))
+            .ok()
+            .flatten()
+            .expect("validator set");
+        let proposer = set.entries[proposer_idx as usize].id;
+        let alpha = vrf_alpha(&beacon, checkpoint.height, &proposer);
+        let signer = self.key_ring.signer(proposer_idx as usize);
+        let (vrf_proof, _) = signer.vrf_prove(&alpha).expect("vrf prove");
+        let msg = messages::proposer_message(&proposer, &checkpoint);
+        types::macros::MacroProposal {
+            checkpoint,
+            proposer,
+            vrf_proof,
+            proposer_sig: signer.sign_bls(dst::MACRO_PROPOSER_SIG, &msg),
+        }
+    }
+
+    /// Count slash evidence entries across all validators.
+    pub fn slash_evidence_count(&self) -> usize {
+        self.persistence.iter().map(|p| p.slash_count()).sum()
+    }
+
+    /// Count inactivity leak notifications emitted during the run.
+    #[must_use]
+    pub fn inactivity_leak_count(&self) -> u32 {
+        self.inactivity_leak_emitted
+    }
+
     fn apply_actions(&mut self, validator_idx: u32, actions: Actions, now: u64) {
         let n = u32::try_from(self.machines.len()).expect("validator count");
         for action in actions {
+            if let Action::BroadcastMacroProposal(ref p) = action {
+                if self
+                    .suppress_macro_proposer
+                    .is_some_and(|id| id == p.proposer)
+                {
+                    continue;
+                }
+            }
             match action {
                 Action::BroadcastMicroQc(qc) => {
                     self.persistence[validator_idx as usize]
@@ -144,6 +222,18 @@ impl World {
                     );
                 }
                 Action::BroadcastMacroProposal(p) => {
+                    let n_e = n;
+                    if consensus::macro_fin::mode_a_active(consensus::macro_fin::compute_ke(
+                        &self.config,
+                        n_e,
+                    )) {
+                        // Gossip skips the sender; proposer must still emit subnet partials.
+                        self.step_validator(
+                            validator_idx,
+                            consensus::Event::MacroProposalReceived(p.clone()),
+                            now,
+                        );
+                    }
                     self.net.enqueue_from_action(
                         validator_idx,
                         &Action::BroadcastMacroProposal(p),
@@ -182,6 +272,11 @@ impl World {
                     self.persistence[validator_idx as usize]
                         .store_macro_qc(&qc)
                         .expect("virtual persistence never fails");
+                    if self.macro_qc_beacon_chained.insert(qc.checkpoint_hash) {
+                        let prev = self.beacon.current().expect("beacon read");
+                        let next = chain_beacon(&prev, &qc.checkpoint_hash);
+                        self.beacon.set(next);
+                    }
                 }
                 Action::UpdateBlobStatus { blob, status } => {
                     self.persistence[validator_idx as usize].update_blob_status(blob, status);
@@ -196,24 +291,58 @@ impl World {
                     );
                 }
                 Action::CancelTimer(id) => self.timer.cancel(id),
-                Action::BroadcastSubnetAggregate(_) => {
-                    debug_assert!(false, "Mode A subnet aggregate is 03c-2");
+                Action::BroadcastSubnetAggregate(agg) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastSubnetAggregate(agg),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
                 }
-                Action::EmitSlashEvidence { .. } => {
-                    debug_assert!(false, "slashing emission is 03d");
+                Action::EmitSlashEvidence { offender, evidence } => {
+                    self.persistence[validator_idx as usize]
+                        .append_slash_evidence(&evidence)
+                        .expect("virtual persistence never fails");
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::EmitSlashEvidence {
+                            offender,
+                            evidence,
+                        },
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::NotifyInactivityLeak {
+                    windows: _,
+                    bps_per_window: _,
+                } => {
+                    self.inactivity_leak_emitted += 1;
                 }
             }
         }
     }
 
     fn step_validator(&mut self, validator_idx: u32, event: consensus::Event, now: u64) {
+        if let consensus::Event::MacroProposalReceived(ref p) = event {
+            if self
+                .suppress_macro_proposer
+                .is_some_and(|id| id == p.proposer)
+            {
+                return;
+            }
+        }
         let idx = validator_idx as usize;
+        let signer = self.key_ring.signer(idx);
         let ctx = HostContext {
             dag: self.dag.as_ref(),
             clock: self.clock.as_ref(),
             valset: self.valset.as_ref(),
             beacon: self.beacon.as_ref(),
             persistence: self.persistence[idx].as_ref(),
+            signer: &signer,
         };
         let actions = self.machines[idx]
             .step(event, &ctx)
@@ -261,7 +390,13 @@ impl World {
         let n = u32::try_from(self.machines.len()).expect("validator count");
         let r = self.virtual_round;
         let parent = self.parent_hash_for_round(r);
-        let batch = build_quorum_vertices_for_round(r, n, parent);
+        let set = self
+            .valset
+            .set_for(Epoch(0))
+            .ok()
+            .flatten()
+            .expect("validator set for vertex production");
+        let batch = build_quorum_vertices_for_round(r, &set, parent, &self.key_ring);
 
         let withheld_author = if self.anchor_withhold {
             let wave = WaveId::of_round(Round(r));

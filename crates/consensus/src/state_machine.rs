@@ -76,22 +76,37 @@ impl StateMachine {
             Event::MicroQcAssembled(qc) => {
                 crate::bullshark::on_micro_qc_assembled(&self.emitted, qc)
             }
-            Event::TimerFired(id) => crate::bullshark::on_timer_fired(
-                &mut self.emitted,
-                &mut self.waves,
-                &self.cfg,
-                id,
-                ctx,
-            ),
+            Event::TimerFired(id) => {
+                let mut actions = crate::bullshark::on_timer_fired(
+                    &mut self.emitted,
+                    &mut self.waves,
+                    &self.cfg,
+                    id,
+                    ctx,
+                )?;
+                crate::macro_fin::on_timer_fired(
+                    &mut self.macros,
+                    &self.cfg,
+                    ctx,
+                    id,
+                    &mut actions,
+                )?;
+                Ok(actions)
+            }
             Event::MacroProposalReceived(p) => {
                 crate::macro_fin::on_macro_proposal(&mut self.macros, &self.cfg, p, ctx)
             }
             Event::BlsPartialReceived(bp) => {
                 crate::macro_fin::on_bls_partial(&mut self.macros, &self.cfg, bp, ctx)
             }
-            Event::SubnetAggregateReceived(_) => Ok(Actions::new()),
+            Event::SubnetAggregateReceived(a) => crate::macro_fin::on_subnet_aggregate(
+                &mut self.macros,
+                &self.cfg,
+                a,
+                ctx,
+            ),
             Event::MacroQcReceived(qc) => {
-                crate::macro_fin::on_macro_qc_received(&mut self.macros, qc, ctx)
+                crate::macro_fin::on_macro_qc_received(&mut self.macros, &self.cfg, qc, ctx)
             }
             Event::ValidatorSetUpdated { .. } => Ok(Actions::new()),
             Event::SlashEvidenceFound(_) => Ok(Actions::new()),
@@ -214,12 +229,14 @@ mod tests {
         static VALSET: EmptyValset = EmptyValset;
         static BEACON: FixedBeacon = FixedBeacon(types::crypto_types::Hash32::zero());
         static PERSIST: NoopPersistence = NoopPersistence;
+        static SIGNER: crate::ports::PanickingSigner = crate::ports::PanickingSigner;
         HostContext {
             dag: &DAG,
             clock: &CLOCK,
             valset: &VALSET,
             beacon: &BEACON,
             persistence: &PERSIST,
+            signer: &SIGNER,
         }
     }
 }

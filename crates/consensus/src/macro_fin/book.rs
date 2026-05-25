@@ -5,11 +5,16 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use crypto::hash::{blake3_with_dst, dst, fixture_bls_sig};
 use types::{
     crypto_types::{BlsSig, Hash32},
-    macros::MacroCheckpoint,
+    macros::{MacroCheckpoint, MacroProposal},
     primitives::{Height, ValidatorId},
 };
 
-use crate::{lock_macro::LockMacro, macro_fin::two_chain::TwoChainRule};
+use crate::{
+    event::{SubnetAggregate, SubnetId},
+    leader::reputation::Reputation,
+    lock_macro::LockMacro,
+    macro_fin::{timer::MacroTimerBook, two_chain::TwoChainRule, vote_book::VoteBook},
+};
 
 /// Per-validator macro-finality state held by `StateMachine`.
 #[derive(Debug)]
@@ -26,6 +31,8 @@ pub struct MacroBook {
     pub(crate) last_macro_hash: Hash32,
     /// Pending candidates by height (built locally or received via `MacroProposal`).
     pub(crate) candidate: BTreeMap<Height, MacroCheckpoint>,
+    /// `R_macro` frozen when the candidate at `height` was built (subnet + proposer).
+    pub(crate) candidate_beacon: BTreeMap<Height, Hash32>,
     /// Partial signers per `checkpoint_hash`.
     pub(crate) partials: HashMap<Hash32, BTreeSet<ValidatorId>>,
     /// Set of `checkpoint_hash`es this validator already emitted a `BroadcastMacroQc` for.
@@ -36,6 +43,30 @@ pub struct MacroBook {
     pub(crate) locks: LockMacro,
     /// Non-protocol stat: number of times `try_lock` rejected a proposal.
     pub(crate) suppressed_conflicts: u64,
+    /// Heights for which a `MacroProposal` was observed locally.
+    pub(crate) proposal_seen: HashSet<Height>,
+    /// Heights where Mode B leaderless aggregation is active.
+    pub(crate) mode_b_active: HashSet<Height>,
+    /// Shoal reputation per validator (macro proposer sortition).
+    pub(crate) reputation: HashMap<ValidatorId, Reputation>,
+    /// Macro-layer timer ids (`T_macropropose`, Mode B deadline).
+    pub(crate) timers: MacroTimerBook,
+    /// Subnet aggregates received per checkpoint hash.
+    pub(crate) subnet_aggs: HashMap<Hash32, HashMap<SubnetId, SubnetAggregate>>,
+    /// Partial signers per `(checkpoint_hash, subnet)` for Mode A.
+    pub(crate) subnet_partials: HashMap<(Hash32, SubnetId), BTreeSet<ValidatorId>>,
+    /// Per-validator vote history (surround detection in 03d).
+    pub(crate) votes: VoteBook,
+    /// Stored partial BLS sig bytes keyed by `(checkpoint_hash, validator)`.
+    pub(crate) partial_sigs: HashMap<(Hash32, ValidatorId), BlsSig>,
+    /// Conflicting macro proposals seen per `(height, proposer)`.
+    pub(crate) proposals_seen: HashMap<(Height, ValidatorId), Vec<MacroProposal>>,
+    /// Invalid crypto events dropped on receive.
+    pub(crate) rejected_crypto: u64,
+    /// Consecutive macro windows adopted without local finalization.
+    pub(crate) unfinalized_windows: u32,
+    /// Whether `NotifyInactivityLeak` was already emitted for the current streak.
+    pub(crate) leak_notified: bool,
 }
 
 impl MacroBook {
@@ -48,11 +79,24 @@ impl MacroBook {
             next_height: Height(0),
             last_macro_hash: Hash32::zero(),
             candidate: BTreeMap::new(),
+            candidate_beacon: BTreeMap::new(),
             partials: HashMap::new(),
             emitted_macro_qc: HashSet::new(),
             two_chain: TwoChainRule::default(),
             locks: LockMacro::new(),
             suppressed_conflicts: 0,
+            proposal_seen: HashSet::new(),
+            mode_b_active: HashSet::new(),
+            reputation: HashMap::new(),
+            timers: MacroTimerBook::new(),
+            subnet_aggs: HashMap::new(),
+            subnet_partials: HashMap::new(),
+            votes: VoteBook::new(),
+            partial_sigs: HashMap::new(),
+            proposals_seen: HashMap::new(),
+            rejected_crypto: 0,
+            unfinalized_windows: 0,
+            leak_notified: false,
         }
     }
 
@@ -66,6 +110,12 @@ impl MacroBook {
     #[must_use]
     pub fn emitted_macro_qc_count(&self) -> usize {
         self.emitted_macro_qc.len()
+    }
+
+    /// Test helper: rejected invalid crypto events.
+    #[must_use]
+    pub fn rejected_crypto(&self) -> u64 {
+        self.rejected_crypto
     }
 }
 

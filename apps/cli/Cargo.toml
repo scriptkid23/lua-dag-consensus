@@ -28,6 +28,7 @@ serde       = { workspace = true }
 serde_json  = { workspace = true }
 clap        = { workspace = true }
 hex         = { workspace = true }
+toml        = { workspace = true }
 rand        = { workspace = true }
 rand_chacha = { workspace = true }
 

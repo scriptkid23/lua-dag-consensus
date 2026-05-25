@@ -5,6 +5,7 @@
 pub mod adversary;
 pub mod args;
 pub mod checker;
+pub mod keys;
 pub mod metrics;
 pub mod replay;
 pub mod scenarios;

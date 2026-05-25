@@ -2,7 +2,7 @@
 //!
 //! Each emitted `Action` is routed by `net::gossip_wire::is_broadcast`:
 //!   * broadcasts → `net_actions_tx` (consumed by the live swarm task)
-//!   * local actions (timers, persistence, blob status) → the existing bridge
+//!   * local actions → [`ActionApplier`] (persistence, timers, beacon)
 
 use std::sync::Arc;
 
@@ -11,8 +11,13 @@ use net::Bridge;
 use storage::RocksPersistence;
 use tokio::sync::mpsc;
 use tracing::warn;
+use types::validator::ValidatorSet;
 
-use crate::{host_context::StubHostBundle, observability::metrics::Metrics};
+use crate::{
+    action_applier::ActionApplier,
+    host_context::StubHostBundle,
+    observability::metrics::Metrics,
+};
 
 /// Long-running orchestrator task.
 #[derive(Debug)]
@@ -27,6 +32,10 @@ pub struct Orchestrator {
     host_bundle: StubHostBundle,
     /// Rocks-backed persistence for `HostContext` and local actions.
     persistence: RocksPersistence,
+    /// Local side-effects (persist, timers, beacon).
+    action_applier: ActionApplier,
+    valset: ValidatorSet,
+    l1_real_vertex_certs: bool,
 }
 
 impl Orchestrator {
@@ -41,6 +50,9 @@ impl Orchestrator {
         metrics: Arc<Metrics>,
         net_actions_tx: mpsc::Sender<Action>,
         host_bundle: StubHostBundle,
+        action_applier: ActionApplier,
+        valset: ValidatorSet,
+        l1_real_vertex_certs: bool,
     ) -> Self {
         Self {
             sm,
@@ -50,6 +62,9 @@ impl Orchestrator {
             net_actions_tx,
             host_bundle,
             persistence,
+            action_applier,
+            valset,
+            l1_real_vertex_certs,
         }
     }
 
@@ -60,6 +75,27 @@ impl Orchestrator {
                 maybe_event = self.events_rx.recv() => {
                     let Some(event) = maybe_event else { break };
                     self.metrics.events_processed.inc();
+                    if let Event::CertifiedVertexReceived(cv) = &event {
+                        if self.l1_real_vertex_certs {
+                            if let Err(e) = dag::cert::verify_certified_vertex(cv, &self.valset) {
+                                warn!(
+                                    target: "node::orchestrator",
+                                    error = %e,
+                                    "rejecting certified vertex"
+                                );
+                                self.metrics.vertex_cert_rejected.inc();
+                                continue;
+                            }
+                        }
+                        if let Err(e) = self.host_bundle.dag.ingest(cv.clone()) {
+                            warn!(
+                                target: "node::orchestrator",
+                                error = %e,
+                                "failed to ingest certified vertex"
+                            );
+                            continue;
+                        }
+                    }
                     let ctx = crate::host_context::build_host_context(
                         &self.host_bundle,
                         &self.persistence,
@@ -74,23 +110,18 @@ impl Orchestrator {
                     for action in actions {
                         self.metrics.actions_dispatched.inc();
                         if net::gossip_wire::is_broadcast(&action) {
-                            // Lossy back-pressure: if the swarm is wedged we'd
-                            // rather drop one broadcast and keep consensus
-                            // running than deadlock the orchestrator.
-                            if let Err(e) = self.net_actions_tx.try_send(action) {
+                            if let Err(e) = self.net_actions_tx.try_send(action.clone()) {
                                 self.metrics.actions_dropped.inc();
                                 warn!(target: "node::orchestrator", error = %e, "net actions channel full; dropping broadcast");
                             }
-                        } else if let Err(e) = Bridge::translate_action(&action) {
-                            warn!(target: "node::orchestrator", error = %e, "translate action failed");
+                        }
+                        if let Err(e) = self.action_applier.apply(&action) {
+                            warn!(target: "node::orchestrator", error = %e, "local action apply failed");
                         }
                     }
                 },
                 maybe_action = self.bridge.actions_rx.recv() => {
                     let Some(_action) = maybe_action else { break };
-                    // BridgeHandle is unused in the live path now: broadcasts go via
-                    // `net_actions_tx`. Drain anything that arrives here so the
-                    // channel doesn't fill up.
                 },
             }
         }

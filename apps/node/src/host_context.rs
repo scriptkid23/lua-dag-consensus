@@ -1,41 +1,61 @@
-//! Stub [`consensus::HostContext`] for 03b-1 (production wiring in plan 06b).
+//! Production [`consensus::HostContext`] wiring (plans 06b-l3 / 06b-L1).
 
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result as AnyhowResult};
 use consensus::{
     Result,
     host_context::HostContext,
-    ports::{DagView, RandomnessBeacon, ValidatorSetPort},
+    leader::beacon::chain_beacon,
+    ports::{RandomnessBeacon, ValidatorSetPort},
 };
 use storage::RocksPersistence;
 use types::{
     crypto_types::Hash32,
-    dag::CertifiedVertex,
-    primitives::{Epoch, Round, ValidatorId},
+    macros::MacroQc,
+    primitives::{Epoch, ValidatorId},
     validator::ValidatorSet,
 };
 
-use crate::timer::TokioClock;
+use crate::{
+    devnet_keys::validator_id_from_label,
+    live_dag::LiveDag,
+    signer::DevSigner,
+    timer::TokioClock,
+};
 
-/// Empty DAG — no vertices until L1 ingress (plan 06b).
-#[derive(Debug, Default)]
-pub struct EmptyDag;
+/// Beacon chained on each locally persisted macro QC (mirrors sim).
+#[derive(Debug)]
+pub struct ChainedBeacon {
+    current: Mutex<Hash32>,
+}
 
-impl DagView for EmptyDag {
-    fn vertex(&self, _hash: &Hash32) -> Result<Option<CertifiedVertex>> {
-        Ok(None)
+impl ChainedBeacon {
+    /// Genesis beacon is zero.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            current: Mutex::new(Hash32::zero()),
+        }
     }
 
-    fn vertices_at_round(&self, _round: Round) -> Result<Vec<CertifiedVertex>> {
-        Ok(vec![])
+    /// Advance beacon state after adopting a macro QC.
+    pub fn adopt_macro_qc(&self, qc: &MacroQc) {
+        let mut guard = self.current.lock().expect("beacon lock poisoned");
+        *guard = chain_beacon(&*guard, &qc.checkpoint_hash);
     }
 }
 
-/// Fixed beacon bytes until ECVRF wiring (plan 03b-2).
-#[derive(Debug, Clone)]
-pub struct FixedBeacon(pub Hash32);
+impl Default for ChainedBeacon {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
-impl RandomnessBeacon for FixedBeacon {
+impl RandomnessBeacon for ChainedBeacon {
     fn current(&self) -> Result<Hash32> {
-        Ok(self.0)
+        Ok(*self.current.lock().expect("beacon lock poisoned"))
     }
 }
 
@@ -75,29 +95,44 @@ impl ValidatorSetPort for CachedValidatorSet {
     }
 }
 
-/// Owned port stubs reused across orchestrator steps.
+/// Owned host ports reused across orchestrator steps.
 #[derive(Debug)]
 pub struct StubHostBundle {
-    /// Empty DAG until L1 adapter lands.
-    pub dag: EmptyDag,
+    /// Live L1 DAG (gossip ingress + Rocks vertex column).
+    pub dag: Arc<LiveDag>,
     /// Process clock.
     pub clock: TokioClock,
     /// Genesis / loaded validator set.
     pub valset: CachedValidatorSet,
-    /// Fixed beacon.
-    pub beacon: FixedBeacon,
+    /// Macro-QC-chained beacon (shared with `ActionApplier`).
+    pub beacon: Arc<ChainedBeacon>,
+    /// Dev-only local signer (plan 03d / 06b-l3 pubkey match).
+    pub signer: DevSigner,
 }
 
 impl StubHostBundle {
-    /// Build stubs for devnet / skeleton startup.
-    #[must_use]
-    pub fn new(valset: ValidatorSet) -> Self {
-        Self {
-            dag: EmptyDag,
+    /// Build host ports for devnet startup; signer must match `label` in valset.
+    pub fn new(
+        label: &str,
+        valset: ValidatorSet,
+        dag: Arc<LiveDag>,
+        signer_key_path: Option<&Path>,
+    ) -> AnyhowResult<Self> {
+        let self_id = validator_id_from_label(label);
+        let bls_pubkey = valset
+            .entries
+            .iter()
+            .find(|e| e.id == self_id)
+            .with_context(|| format!("self_id {self_id} not found in validator set"))?
+            .bls_pubkey;
+        let beacon = Arc::new(ChainedBeacon::new());
+        Ok(Self {
+            dag,
             clock: TokioClock::new(),
             valset: CachedValidatorSet::new(valset),
-            beacon: FixedBeacon(Hash32::zero()),
-        }
+            beacon,
+            signer: DevSigner::load_for_label(label, &bls_pubkey, signer_key_path)?,
+        })
     }
 }
 
@@ -108,10 +143,11 @@ pub fn build_host_context<'a>(
     persistence: &'a RocksPersistence,
 ) -> HostContext<'a> {
     HostContext {
-        dag: &bundle.dag,
+        dag: &*bundle.dag,
         clock: &bundle.clock,
         valset: &bundle.valset,
-        beacon: &bundle.beacon,
+        beacon: &*bundle.beacon,
         persistence,
+        signer: &bundle.signer,
     }
 }
