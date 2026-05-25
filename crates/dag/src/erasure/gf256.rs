@@ -78,6 +78,35 @@ pub(super) fn pow(a: u8, mut n: u32) -> u8 {
     acc
 }
 
+/// `out[i] = mul(c, input[i])` for every byte (Jerasure/Backblaze-style slice op).
+pub(super) fn mul_slice(c: u8, input: &[u8], out: &mut [u8]) {
+    assert_eq!(input.len(), out.len());
+    if c == 0 {
+        out.fill(0);
+        return;
+    }
+    for (dst, &src) in out.iter_mut().zip(input) {
+        *dst = mul(c, src);
+    }
+}
+
+/// `out[i] ^= mul(c, input[i])` for every byte.
+pub(super) fn mul_slice_add(c: u8, input: &[u8], out: &mut [u8]) {
+    assert_eq!(input.len(), out.len());
+    if c == 0 {
+        return;
+    }
+    if c == 1 {
+        for (dst, &src) in out.iter_mut().zip(input) {
+            *dst ^= src;
+        }
+        return;
+    }
+    for (dst, &src) in out.iter_mut().zip(input) {
+        *dst = add(*dst, mul(c, src));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +126,25 @@ mod tests {
             assert_eq!(pow(a, n), p);
             p = mul(p, a);
         }
+    }
+
+    #[test]
+    fn mul_slice_matches_scalar() {
+        let input = [1u8, 2, 3, 4];
+        let mut out = [0u8; 4];
+        mul_slice(5, &input, &mut out);
+        assert_eq!(out, [5, 10, 15, 20]);
+    }
+
+    #[test]
+    fn mul_slice_add_matches_scalar() {
+        let input = [1u8, 2, 3, 4];
+        let mut out = [10u8, 20, 30, 40];
+        let mut expect = out;
+        for (e, s) in expect.iter_mut().zip(input) {
+            *e = add(*e, mul(5, s));
+        }
+        mul_slice_add(5, &input, &mut out);
+        assert_eq!(out, expect);
     }
 }

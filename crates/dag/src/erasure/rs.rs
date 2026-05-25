@@ -1,16 +1,39 @@
 //! Systematic Reed–Solomon encode/decode over GF(256) (07c in-house codec).
+//!
+//! Uses the **storage erasure** Vandermonde convention (Backblaze / Jerasure extended
+//! matrix): `V[r][c] = r^c` in GF(2^8), then `E = V · inv(V_top)` so the top `k` rows
+//! are identity. This differs from [RFC 5510](https://www.rfc-editor.org/rfc/rfc5510)
+//! §8.2.1, which uses `v[i,j] = α^(i·j)` for RTP/FEC — wire formats are not compatible.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use super::config::ErasureConfig;
 use super::error::{ErasureError, Result};
 use super::gf256;
 
+/// Maximum total shard count for the `r^c` Vandermonde (distinct row indices in GF(256)).
+const MAX_SHARDS: u32 = 256;
+
+type Matrix = Vec<Vec<u8>>;
+
+static ENCODING_MATRIX_CACHE: OnceLock<Mutex<HashMap<(u32, u32), Arc<Matrix>>>> = OnceLock::new();
+
+fn matrix_cache() -> &'static Mutex<HashMap<(u32, u32), Arc<Matrix>>> {
+    ENCODING_MATRIX_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Pad `payload` to `k * data_shard_size` and produce `n` equal-size shards.
 pub fn encode_shards(payload: &[u8], cfg: &ErasureConfig) -> Result<Vec<Vec<u8>>> {
     validate_cfg(cfg)?;
+    if payload.len() > cfg.padded_len() {
+        return Err(ErasureError::Config("payload exceeds RS padded capacity"));
+    }
+
     let k = usize::try_from(cfg.k).expect("k fits usize");
     let n = usize::try_from(cfg.n).expect("n fits usize");
+    let matrix = cached_encoding_matrix(cfg)?;
     let padded = pad_to_k_shards(payload, cfg);
-    let matrix = encoding_matrix(n, k)?;
 
     let mut shards: Vec<Vec<u8>> = padded
         .chunks(cfg.data_shard_size)
@@ -18,12 +41,8 @@ pub fn encode_shards(payload: &[u8], cfg: &ErasureConfig) -> Result<Vec<Vec<u8>>
         .collect();
     shards.resize_with(n, || vec![0u8; cfg.data_shard_size]);
 
-    for byte in 0..cfg.data_shard_size {
-        let data: Vec<u8> = (0..k).map(|row| shards[row][byte]).collect();
-        for row in 0..n {
-            shards[row][byte] = dot(&matrix[row], &data);
-        }
-    }
+    let (data_shards, parity_shards) = shards.split_at_mut(k);
+    encode_parity_shards(&matrix, k, data_shards, parity_shards);
     Ok(shards)
 }
 
@@ -62,11 +81,22 @@ pub fn decode_shards(
     Ok(out)
 }
 
+/// Compute parity rows from data rows using the systematic encoding matrix.
+fn encode_parity_shards(matrix: &Matrix, k: usize, data: &[Vec<u8>], parity: &mut [Vec<u8>]) {
+    for (offset, parity_shard) in parity.iter_mut().enumerate() {
+        let row = k + offset;
+        parity_shard.fill(0);
+        for j in 0..k {
+            gf256::mul_slice_add(matrix[row][j], &data[j], parity_shard);
+        }
+    }
+}
+
 /// Fill every missing shard from any `k` present ones.
 fn reconstruct_shards(shards: &mut [Option<Vec<u8>>], cfg: &ErasureConfig) -> Result<()> {
     let k = usize::try_from(cfg.k).expect("k fits usize");
     let n = shards.len();
-    let matrix = encoding_matrix(n, k)?;
+    let matrix = cached_encoding_matrix(cfg)?;
 
     let present: Vec<usize> = shards
         .iter()
@@ -80,39 +110,63 @@ fn reconstruct_shards(shards: &mut [Option<Vec<u8>>], cfg: &ErasureConfig) -> Re
     let sub = submatrix(&matrix, &use_rows);
     let inv = invert_matrix(&sub).map_err(|e| ErasureError::Codec(e.to_string()))?;
 
-    for byte in 0..cfg.data_shard_size {
-        let known: Vec<u8> = use_rows
-            .iter()
-            .map(|&row| shards[row].as_ref().expect("present")[byte])
-            .collect();
-        let data = mat_vec_mul(&inv, &known);
-
-        for j in 0..k {
-            if shards[j].is_none() {
-                shards[j] = Some(vec![0u8; cfg.data_shard_size]);
-            }
-            shards[j].as_mut().expect("initialized")[byte] = data[j];
+    let shard_size = cfg.data_shard_size;
+    let mut data_shards = vec![vec![0u8; shard_size]; k];
+    for j in 0..k {
+        for t in 0..k {
+            let src = shards[use_rows[t]].as_ref().expect("present shard");
+            gf256::mul_slice_add(inv[j][t], src, &mut data_shards[j]);
         }
-        for row in 0..n {
-            if shards[row].is_none() {
-                shards[row] = Some(vec![0u8; cfg.data_shard_size]);
-            }
-            shards[row].as_mut().expect("initialized")[byte] = dot(&matrix[row], &data);
+    }
+
+    for j in 0..k {
+        if shards[j].is_none() {
+            shards[j] = Some(vec![0u8; shard_size]);
+        }
+        shards[j]
+            .as_mut()
+            .expect("initialized")
+            .copy_from_slice(&data_shards[j]);
+    }
+    for row in k..n {
+        if shards[row].is_none() {
+            shards[row] = Some(vec![0u8; shard_size]);
+        }
+        let out = shards[row].as_mut().expect("initialized");
+        out.fill(0);
+        for j in 0..k {
+            gf256::mul_slice_add(matrix[row][j], &data_shards[j], out);
         }
     }
     Ok(())
 }
 
+fn cached_encoding_matrix(cfg: &ErasureConfig) -> Result<Arc<Matrix>> {
+    let key = (cfg.n, cfg.k);
+    if let Some(matrix) = matrix_cache().lock().expect("matrix cache lock").get(&key) {
+        return Ok(Arc::clone(matrix));
+    }
+
+    let n = usize::try_from(cfg.n).expect("n fits usize");
+    let k = usize::try_from(cfg.k).expect("k fits usize");
+    let matrix = Arc::new(build_encoding_matrix(n, k)?);
+    matrix_cache()
+        .lock()
+        .expect("matrix cache lock")
+        .insert(key, Arc::clone(&matrix));
+    Ok(matrix)
+}
+
 /// Build systematic `n × k` encoding matrix (top `k` rows = identity).
-fn encoding_matrix(n: usize, k: usize) -> Result<Vec<Vec<u8>>> {
+fn build_encoding_matrix(n: usize, k: usize) -> Result<Matrix> {
     let v = vandermonde(n, k);
     let top: Vec<Vec<u8>> = v[..k].to_vec();
     let inv = invert_matrix(&top).map_err(|e| ErasureError::Codec(e.to_string()))?;
     Ok(mat_mul(&v, &inv))
 }
 
-/// `V[r][c] = r^c` over GF(256), matching `reed-solomon-erasure` row indexing.
-fn vandermonde(rows: usize, cols: usize) -> Vec<Vec<u8>> {
+/// Extended Vandermonde: `V[r][c] = r^c` over GF(256) (Backblaze / Jerasure).
+fn vandermonde(rows: usize, cols: usize) -> Matrix {
     (0..rows)
         .map(|r| {
             let base = u8::try_from(r).expect("row index fits u8");
@@ -123,19 +177,8 @@ fn vandermonde(rows: usize, cols: usize) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn dot(row: &[u8], col: &[u8]) -> u8 {
-    row.iter()
-        .zip(col)
-        .fold(0u8, |acc, (&a, &b)| gf256::add(acc, gf256::mul(a, b)))
-}
 
-fn mat_vec_mul(mat: &[Vec<u8>], vec: &[u8]) -> Vec<u8> {
-    mat.iter()
-        .map(|row| dot(row, vec))
-        .collect()
-}
-
-fn mat_mul(a: &[Vec<u8>], b: &[Vec<u8>]) -> Vec<Vec<u8>> {
+fn mat_mul(a: &[Vec<u8>], b: &[Vec<u8>]) -> Matrix {
     let rows = a.len();
     let cols = b[0].len();
     let inner = b.len();
@@ -152,11 +195,11 @@ fn mat_mul(a: &[Vec<u8>], b: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
-fn submatrix(mat: &[Vec<u8>], rows: &[usize]) -> Vec<Vec<u8>> {
+fn submatrix(mat: &Matrix, rows: &[usize]) -> Matrix {
     rows.iter().map(|&r| mat[r].clone()).collect()
 }
 
-fn invert_matrix(mat: &[Vec<u8>]) -> std::result::Result<Vec<Vec<u8>>, &'static str> {
+fn invert_matrix(mat: &Matrix) -> std::result::Result<Matrix, &'static str> {
     let n = mat.len();
     if n == 0 || mat.iter().any(|row| row.len() != n) {
         return Err("matrix must be square");
@@ -206,13 +249,15 @@ fn validate_cfg(cfg: &ErasureConfig) -> Result<()> {
     if cfg.k == 0 || cfg.n <= cfg.k || cfg.data_shard_size == 0 {
         return Err(ErasureError::Config("k/n/shard_size invalid"));
     }
+    if cfg.n > MAX_SHARDS {
+        return Err(ErasureError::Config("n exceeds GF(256) Vandermonde row limit"));
+    }
     Ok(())
 }
 
 fn pad_to_k_shards(payload: &[u8], cfg: &ErasureConfig) -> Vec<u8> {
     let mut padded = vec![0u8; cfg.padded_len()];
-    let copy_len = payload.len().min(padded.len());
-    padded[..copy_len].copy_from_slice(&payload[..copy_len]);
+    padded[..payload.len()].copy_from_slice(payload);
     padded
 }
 
@@ -223,13 +268,48 @@ mod tests {
 
     #[test]
     fn encoding_matrix_top_is_identity() {
-        let matrix = encoding_matrix(6, 4).unwrap();
+        let matrix = build_encoding_matrix(6, 4).unwrap();
         for r in 0..4 {
             for c in 0..4 {
                 let want = if r == c { 1 } else { 0 };
                 assert_eq!(matrix[r][c], want, "({r},{c})");
             }
         }
+    }
+
+    #[test]
+    fn rejects_oversized_payload() {
+        let cfg = ErasureConfig {
+            k: 4,
+            n: 6,
+            data_shard_size: 1024,
+        };
+        let payload = vec![0u8; cfg.padded_len() + 1];
+        let err = encode_shards(&payload, &cfg).unwrap_err();
+        assert!(matches!(err, ErasureError::Config(_)));
+    }
+
+    #[test]
+    fn rejects_too_many_shards() {
+        let cfg = ErasureConfig {
+            k: 200,
+            n: 257,
+            data_shard_size: 64,
+        };
+        let err = encode_shards(&[], &cfg).unwrap_err();
+        assert!(matches!(err, ErasureError::Config(_)));
+    }
+
+    #[test]
+    fn encoding_matrix_is_cached() {
+        let cfg = ErasureConfig {
+            k: 4,
+            n: 6,
+            data_shard_size: 1024,
+        };
+        let a = cached_encoding_matrix(&cfg).unwrap();
+        let b = cached_encoding_matrix(&cfg).unwrap();
+        assert!(Arc::ptr_eq(&a, &b));
     }
 
     #[test]
