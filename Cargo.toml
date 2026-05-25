@@ -64,7 +64,6 @@ proptest     = "1"
 rand         = "0.8"
 rand_chacha  = "0.3"
 tempfile     = "3"
-reed-solomon-erasure = "6"
 
 [workspace.lints.rust]
 unsafe_code            = "deny"

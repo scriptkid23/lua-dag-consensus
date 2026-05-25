@@ -6,8 +6,8 @@ pub enum ErasureError {
     /// Invalid configuration.
     #[error("invalid erasure config: {0}")]
     Config(&'static str),
-    /// Reed–Solomon engine error.
-    #[error("reed-solomon error: {0}")]
+    /// Erasure codec error.
+    #[error("erasure codec error: {0}")]
     Codec(String),
 }
 

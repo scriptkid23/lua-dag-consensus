@@ -3,6 +3,7 @@
 mod config;
 mod error;
 pub mod commit;
+mod gf256;
 mod rs;
 
 pub use commit::{rs_merkle_commitment, shard_leaf_hash};
