@@ -34,6 +34,8 @@
 **Files:**
 - Modify: `apps/node/src/blob/mod.rs`
 
+**Architectural invariant — DO NOT VIOLATE:** `enqueue_pending` is called from exactly **one** site: the end of `publish_payload`, after the chunk loop. The gossip-ingress loop `BlobCustody::run` (which consumes `chunks_rx` from peers) must NOT be modified to enqueue — it only updates the custody ledger and metrics. Reason: blobs arriving via gossip are anchored by their originating submitter's node, not re-anchored by every receiver. Enqueueing on gossip ingest would cause the same `blob_id` to land in multiple validators' vertex headers across rounds, polluting the DAG. The `pending` field lives on `BlobCustodyHandle`, never on the `BlobCustody` struct, precisely so the ingest loop has no way to reach it.
+
 - [ ] **Step 1: Write the failing test**
 
 Append to the existing `apps/node/src/blob/mod.rs` (no `#[cfg(test)] mod tests` exists yet — add one at the bottom of the file):
