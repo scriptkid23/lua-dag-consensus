@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use consensus::{config::Config, event::Event};
-use crypto::hash::{blake3_with_dst, dst};
-use dag::blob::commit::blob_id_from_payload;
 use net::gossip::Topic;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -38,9 +36,6 @@ pub struct L1Driver {
     round_duration: Duration,
     real_vertex_certs: bool,
     blob_custody: Option<BlobCustodyHandle>,
-    demo_blob_enabled: bool,
-    demo_blob_every_n_rounds: u64,
-    chunk_size: u32,
     metrics: Arc<Metrics>,
 }
 
@@ -58,9 +53,6 @@ impl L1Driver {
         round_duration: Duration,
         real_vertex_certs: bool,
         blob_custody: Option<BlobCustodyHandle>,
-        demo_blob_enabled: bool,
-        demo_blob_every_n_rounds: u64,
-        chunk_size: u32,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
@@ -74,9 +66,6 @@ impl L1Driver {
             round_duration,
             real_vertex_certs,
             blob_custody,
-            demo_blob_enabled,
-            demo_blob_every_n_rounds,
-            chunk_size,
             metrics,
         }
     }
@@ -108,13 +97,13 @@ impl L1Driver {
             }
         };
 
-        let demo_blobs = self.demo_blobs_for_round().await;
+        let pending_blobs = self.pending_blobs_for_round();
         let batch = build_quorum_vertices_with_blobs(
             self.virtual_round,
             &self.valset,
             parent,
             self.real_vertex_certs,
-            demo_blobs,
+            pending_blobs,
         );
         for cv in batch {
             if self.real_vertex_certs {
@@ -150,41 +139,11 @@ impl L1Driver {
         true
     }
 
-    async fn demo_blobs_for_round(&mut self) -> Vec<BlobRef> {
-        if !self.demo_blob_enabled {
-            return vec![];
-        }
-        let Some(custody) = &self.blob_custody else {
-            return vec![];
-        };
-        if self.demo_blob_every_n_rounds == 0
-            || self.virtual_round % self.demo_blob_every_n_rounds != 0
-        {
-            return vec![];
-        }
-
-        let payload = demo_blob_payload(self.virtual_round, self.chunk_size);
-        let blob_id = blob_id_from_payload(&payload);
-        if !custody.is_available(&blob_id) {
-            if let Err(e) = custody.publish_payload(payload.clone()).await {
-                warn!(target: "node::l1_driver", error = %e, "demo blob publish failed");
-            }
-        }
-        if !custody.is_available(&blob_id) {
-            warn!(
-                target: "node::l1_driver",
-                ?blob_id,
-                "demo blob not locally available; skipping BlobRef attachment"
-            );
-            self.metrics.blob_custody_missing.inc();
-            return vec![];
-        }
-
-        vec![BlobRef {
-            blob_id,
-            commitment: custody.blob_ref_commitment(&payload),
-            size_bytes: u64::try_from(payload.len()).expect("payload fits u64"),
-        }]
+    fn pending_blobs_for_round(&self) -> Vec<BlobRef> {
+        self.blob_custody
+            .as_ref()
+            .map(|c| c.drain_pending())
+            .unwrap_or_default()
     }
 
     /// Quorum size for the configured validator set (test helper).
@@ -192,16 +151,6 @@ impl L1Driver {
     pub fn quorum_size(&self) -> u32 {
         quorum_vertex_count(u32::try_from(self.valset.entries.len()).unwrap_or(0))
     }
-}
-
-/// Deterministic multi-chunk demo payload keyed by virtual round.
-#[must_use]
-pub fn demo_blob_payload(round: u64, chunk_size: u32) -> Vec<u8> {
-    let seed = blake3_with_dst(dst::SIM_VERTEX_HASH, &round.to_be_bytes());
-    let len = chunk_size as usize + 1024;
-    let mut payload = vec![0u8; len];
-    payload[..32].copy_from_slice(seed.as_bytes());
-    payload
 }
 
 #[cfg(test)]
@@ -240,9 +189,6 @@ mod tests {
             Duration::from_millis(10_000),
             false,
             None,
-            false,
-            8,
-            65_536,
             metrics,
         );
         let quorum = driver.quorum_size();
@@ -259,5 +205,99 @@ mod tests {
             received += 1;
         }
         assert_eq!(received, quorum as usize);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn pending_blobs_attached_round_robin() {
+        use crate::blob::{BlobCustody, BlobCustodyConfig, RocksBlobStore};
+        use dag::blob::store::BlobStore as BlobStoreTrait;
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Database::open(&StorageConfig {
+                path: dir.path().to_path_buf(),
+                create_if_missing: true,
+                max_total_wal_size_mb: 16,
+            })
+            .unwrap(),
+        );
+        let dag = Arc::new(LiveDag::new(Arc::clone(&db)));
+        let valset = devnet_valset_four();
+        let config = consensus::Config::default_table_17_1();
+        let beacon = Arc::new(ChainedBeacon::new());
+        let (events_tx, mut events_rx) = mpsc::channel(64);
+        let (publish_tx, mut publish_rx) = mpsc::channel(256);
+        tokio::spawn(async move {
+            while publish_rx.recv().await.is_some() {}
+        });
+        let metrics = Arc::new(Metrics::new().unwrap());
+
+        let store: Arc<dyn BlobStoreTrait> = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
+        let (_chunks_tx, chunks_rx) = mpsc::channel(64);
+        let custody = BlobCustody::spawn(
+            store,
+            chunks_rx,
+            publish_tx.clone(),
+            BlobCustodyConfig {
+                chunk_size: 1024,
+                erasure: None,
+            },
+            metrics.clone(),
+        );
+
+        let mut submitted_ids = Vec::new();
+        for i in 0u8..5 {
+            let payload = vec![0xA0u8 ^ i; 1500];
+            submitted_ids.push(custody.publish_payload(payload).await.unwrap());
+        }
+
+        let mut driver = L1Driver::new(
+            valset.clone(),
+            config,
+            dag,
+            beacon,
+            events_tx,
+            publish_tx,
+            Duration::from_millis(10_000),
+            true,
+            Some(custody.clone()),
+            metrics,
+        );
+        let quorum = driver.quorum_size();
+        assert_eq!(quorum, 3);
+
+        assert!(driver.tick_round().await);
+
+        let mut received: Vec<types::dag::CertifiedVertex> = Vec::new();
+        for _ in 0..quorum {
+            let ev = events_rx.recv().await.expect("event");
+            let Event::CertifiedVertexReceived(cv) = ev else {
+                panic!("expected CertifiedVertexReceived");
+            };
+            received.push(cv);
+        }
+
+        // Per-slot counts: 5 blobs, quorum=3 → [2,2,1].
+        let mut counts: Vec<usize> = received.iter().map(|cv| cv.vertex.blobs.len()).collect();
+        counts.sort_unstable();
+        assert_eq!(counts, vec![1, 2, 2]);
+
+        let total: usize = received.iter().map(|cv| cv.vertex.blobs.len()).sum();
+        assert_eq!(total, 5);
+
+        let mut seen_ids: Vec<_> = received
+            .iter()
+            .flat_map(|cv| cv.vertex.blobs.iter().map(|b| b.blob_id))
+            .collect();
+        seen_ids.sort();
+        let mut expected_ids = submitted_ids.clone();
+        expected_ids.sort();
+        assert_eq!(seen_ids, expected_ids);
+
+        for cv in &received {
+            dag::cert::verify_certified_vertex(cv, &valset).expect("real cert verifies");
+        }
+
+        assert!(custody.drain_pending().is_empty());
     }
 }

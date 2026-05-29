@@ -58,12 +58,6 @@ pub struct NodeSection {
     /// Fixed chunk size for blob payload splitting (07b).
     #[serde(default = "default_blob_chunk_size")]
     pub blob_chunk_size_bytes: u32,
-    /// When true, L1 driver attaches a synthetic demo blob on schedule (07b).
-    #[serde(default)]
-    pub l1_demo_blob_enabled: bool,
-    /// Attach demo blob every N virtual rounds when demo blob is enabled (07b).
-    #[serde(default = "default_demo_blob_every")]
-    pub demo_blob_every_n_rounds: u64,
     /// When true, publish RS erasure shards instead of sequential chunks (07c).
     #[serde(default)]
     pub l1_erasure_enabled: bool,
@@ -92,10 +86,6 @@ fn default_erasure_data_shard_size() -> u32 {
 
 fn default_blob_chunk_size() -> u32 {
     65_536
-}
-
-fn default_demo_blob_every() -> u64 {
-    8
 }
 
 fn default_network_mode() -> String {

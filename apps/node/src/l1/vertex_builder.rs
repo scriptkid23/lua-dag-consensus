@@ -109,7 +109,8 @@ pub fn build_quorum_vertices_for_valset(
     build_quorum_vertices_with_blobs(round, valset, parent_hash, real_certs, vec![])
 }
 
-/// Build `2f+1` certified vertices with optional shared blob refs (07b).
+/// Build `2f+1` certified vertices, partitioning `blobs` round-robin across
+/// quorum slots (slot `i` receives blob `j` where `j % quorum == i`).
 #[must_use]
 pub fn build_quorum_vertices_with_blobs(
     round: u64,
@@ -120,6 +121,13 @@ pub fn build_quorum_vertices_with_blobs(
 ) -> Vec<CertifiedVertex> {
     let n = u32::try_from(valset.entries.len()).expect("validator count fits u32");
     let quorum = quorum_vertex_count(n);
+    let quorum_usize = quorum as usize;
+
+    let mut buckets: Vec<Vec<BlobRef>> = (0..quorum_usize).map(|_| Vec::new()).collect();
+    for (j, b) in blobs.into_iter().enumerate() {
+        buckets[j % quorum_usize].push(b);
+    }
+
     (0..quorum)
         .map(|i| {
             let idx = usize::try_from((round + u64::from(i)) % u64::from(n)).expect("index");
@@ -130,7 +138,7 @@ pub fn build_quorum_vertices_with_blobs(
                 parent_hash,
                 real_certs,
                 valset,
-                blobs.clone(),
+                std::mem::take(&mut buckets[i as usize]),
             )
         })
         .collect()
@@ -172,5 +180,36 @@ mod tests {
         assert_ne!(h0, h1);
         assert_ne!(h1, h2);
         assert_ne!(h0, h2);
+    }
+
+    #[test]
+    fn blobs_partition_round_robin_across_quorum_slots() {
+        use types::crypto_types::Hash32;
+        let valset = devnet_valset_four();
+        let mk = |tag: u8| BlobRef {
+            blob_id: types::primitives::BlobId([tag; 32]),
+            commitment: Hash32([tag; 32]),
+            size_bytes: u64::from(tag) * 100,
+        };
+        let blobs = vec![mk(1), mk(2), mk(3), mk(4), mk(5)];
+        let batch = build_quorum_vertices_with_blobs(7, &valset, None, false, blobs);
+        assert_eq!(batch.len(), 3);
+        // j % 3: 0,1,2,0,1 → slot0=[1,4], slot1=[2,5], slot2=[3].
+        assert_eq!(batch[0].vertex.blobs.len(), 2);
+        assert_eq!(batch[0].vertex.blobs[0].blob_id.0[0], 1);
+        assert_eq!(batch[0].vertex.blobs[1].blob_id.0[0], 4);
+        assert_eq!(batch[1].vertex.blobs.len(), 2);
+        assert_eq!(batch[1].vertex.blobs[0].blob_id.0[0], 2);
+        assert_eq!(batch[1].vertex.blobs[1].blob_id.0[0], 5);
+        assert_eq!(batch[2].vertex.blobs.len(), 1);
+        assert_eq!(batch[2].vertex.blobs[0].blob_id.0[0], 3);
+    }
+
+    #[test]
+    fn empty_blob_list_yields_empty_buckets_for_all_authors() {
+        let valset = devnet_valset_four();
+        let batch = build_quorum_vertices_with_blobs(0, &valset, None, false, vec![]);
+        assert_eq!(batch.len(), 3);
+        assert!(batch.iter().all(|cv| cv.vertex.blobs.is_empty()));
     }
 }

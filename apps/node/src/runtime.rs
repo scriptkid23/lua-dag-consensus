@@ -240,9 +240,6 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
             } else {
                 None
             },
-            cfg.node.l1_demo_blob_enabled && cfg.node.l1_blob_custody_enabled,
-            cfg.node.demo_blob_every_n_rounds,
-            cfg.node.blob_chunk_size_bytes,
             metrics.clone(),
         );
         tokio::spawn(async move {

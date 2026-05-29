@@ -76,7 +76,7 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
         bridge,
         events_rx,
         persistence,
-        metrics,
+        metrics.clone(),
         net_actions_tx,
         host_bundle,
         action_applier,
@@ -94,6 +94,8 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
         publish_tx,
         Duration::from_millis(50),
         true,
+        None,
+        metrics.clone(),
     );
     tokio::spawn(driver.run());
 
