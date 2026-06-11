@@ -1,5 +1,11 @@
 # L1 Certified-Vertex Driver (06b-L1 remainder) Implementation Plan
 
+> **DEPRECATION (2026-06-11):** The centralized `L1Driver` produce path this plan built is
+> now the legacy `vertex_protocol = "devnet_factory"` mode. The production path is the
+> distributed protocol from
+> [`2026-06-04-distributed-vertex-certificate-design.md`](../specs/2026-06-04-distributed-vertex-certificate-design.md),
+> implemented by [`2026-06-11-distributed-vertex-certificate.md`](2026-06-11-distributed-vertex-certificate.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `apps/node` self-drive L2 Bullshark without an external vertex feed: on each micro-round tick, produce a quorum of `CertifiedVertex` values (mirroring `apps/sim`), persist them via `LiveDag`, inject `Event::CertifiedVertexReceived` into the orchestrator, and **publish** them on gossip topic `certified-vertex` so peer nodes can ingest and run the same SM path.

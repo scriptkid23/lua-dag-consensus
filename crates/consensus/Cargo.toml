@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 types       = { path = "../types" }
 crypto      = { path = "../crypto" }
+dag         = { path = "../dag" }
 borsh       = { workspace = true }
 smallvec    = { workspace = true }
 thiserror   = { workspace = true }

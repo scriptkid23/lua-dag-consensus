@@ -33,7 +33,9 @@ pub enum CertError {
 
 pub type Result<T> = std::result::Result<T, CertError>;
 
-fn quorum_threshold(n: u32) -> u32 {
+/// `2f+1` quorum threshold for `n` validators.
+#[must_use]
+pub fn quorum_threshold(n: u32) -> u32 {
     let f = n.saturating_sub(1) / 3;
     2 * f + 1
 }
@@ -55,6 +57,45 @@ pub fn build_quorum_cert(
     })
 }
 
+/// Assemble a [`CertifiedVertex`] from externally collected partial
+/// signatures (`contributors` = valset index + sig over
+/// [`signing::signing_bytes`] under [`dst::VERTEX_CERT`]).
+///
+/// Performs no signature verification — callers must verify each partial
+/// on receipt and SHOULD run [`verify_certified_vertex`] on the result.
+pub fn assemble_cert(
+    vertex: &Vertex,
+    valset: &ValidatorSet,
+    contributors: &[(u32, types::crypto_types::BlsSig)],
+) -> Result<CertifiedVertex> {
+    let n = u32::try_from(valset.entries.len()).map_err(|_| CertError::BadIndex(0))?;
+    let need = quorum_threshold(n);
+    if u32::try_from(contributors.len()).unwrap_or(0) < need {
+        return Err(CertError::InsufficientSigners {
+            got: u32::try_from(contributors.len()).unwrap_or(0),
+            need,
+        });
+    }
+    let mut sigs = Vec::with_capacity(contributors.len());
+    let mut bm = Bitmap::new(n as usize);
+    for (idx, sig) in contributors {
+        if valset.entries.get(*idx as usize).is_none() {
+            return Err(CertError::BadIndex(*idx));
+        }
+        sigs.push(*sig);
+        bm.set(*idx as usize)
+            .map_err(|_| CertError::BadIndex(*idx))?;
+    }
+    let agg = aggregate_sigs(&sigs).map_err(CertError::Bls)?;
+    Ok(CertifiedVertex {
+        vertex: vertex.clone(),
+        certificate: BlsAggSig {
+            sig: agg,
+            bitmap: bm.as_bytes().to_vec(),
+        },
+    })
+}
+
 /// Build a quorum certificate using a caller-supplied secret-key resolver.
 pub fn build_quorum_cert_with<F>(
     vertex: &Vertex,
@@ -65,37 +106,16 @@ pub fn build_quorum_cert_with<F>(
 where
     F: FnMut(u32) -> Result<SecretKey>,
 {
-    let n = u32::try_from(valset.entries.len()).map_err(|_| CertError::BadIndex(0))?;
-    let need = quorum_threshold(n);
-    if u32::try_from(signer_indices.len()).unwrap_or(0) < need {
-        return Err(CertError::InsufficientSigners {
-            got: u32::try_from(signer_indices.len()).unwrap_or(0),
-            need,
-        });
-    }
     let msg = signing::signing_bytes(vertex);
-    let mut sigs = Vec::with_capacity(signer_indices.len());
     let mut contributors = Vec::with_capacity(signer_indices.len());
     for &idx in signer_indices {
         if valset.entries.get(idx as usize).is_none() {
             return Err(CertError::BadIndex(idx));
         }
         let sk = sk_at(idx)?;
-        sigs.push(sign(&sk, dst::VERTEX_CERT, &msg));
-        contributors.push(idx);
+        contributors.push((idx, sign(&sk, dst::VERTEX_CERT, &msg)));
     }
-    let agg = aggregate_sigs(&sigs).map_err(CertError::Bls)?;
-    let mut bm = Bitmap::new(n as usize);
-    for &idx in &contributors {
-        bm.set(idx as usize).map_err(|_| CertError::BadIndex(idx))?;
-    }
-    Ok(CertifiedVertex {
-        vertex: vertex.clone(),
-        certificate: BlsAggSig {
-            sig: agg,
-            bitmap: bm.as_bytes().to_vec(),
-        },
-    })
+    assemble_cert(vertex, valset, &contributors)
 }
 
 fn bitmap_indices(bitmap: &[u8], n: u32) -> Result<Vec<u32>> {

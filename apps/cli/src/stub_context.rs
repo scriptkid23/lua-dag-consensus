@@ -110,6 +110,7 @@ pub fn replay_host_context() -> HostContext<'static> {
     static BEACON: FixedBeacon = FixedBeacon(Hash32::zero());
     static PERSIST: NoopPersistence = NoopPersistence;
     static SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
+    static NO_PENDING: consensus::ports::NoPendingBlobs = consensus::ports::NoPendingBlobs;
     HostContext {
         dag: &DAG,
         clock: &CLOCK,
@@ -117,5 +118,6 @@ pub fn replay_host_context() -> HostContext<'static> {
         beacon: &BEACON,
         persistence: &PERSIST,
         signer: &SIGNER,
+        pending_blobs: &NO_PENDING,
     }
 }

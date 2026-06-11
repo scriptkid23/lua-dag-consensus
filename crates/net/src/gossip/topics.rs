@@ -25,6 +25,10 @@ pub mod wire {
     pub const SLASH_EVIDENCE: &str = "lua-dag/v1/slash-evidence";
     /// Sequential blob payload chunk stream (L1 07b).
     pub const BLOB_CHUNK: &str = "lua-dag/v1/blob-chunk";
+    /// Vertex proposal headers (L1 distributed cert, 06-04).
+    pub const VERTEX_PROPOSAL: &str = "lua-dag/v1/vertex-proposal";
+    /// Vertex partial votes (L1 distributed cert, 06-04).
+    pub const VERTEX_PARTIAL: &str = "lua-dag/v1/vertex-partial";
 }
 
 /// All gossip topics used by LUA-DAG.
@@ -46,6 +50,10 @@ pub enum Topic {
     SlashEvidence,
     /// Sequential blob payload chunk stream (L1 07b).
     BlobChunk,
+    /// Vertex proposal headers (L1 distributed cert).
+    VertexProposal,
+    /// Vertex partial votes (L1 distributed cert).
+    VertexPartial,
 }
 
 impl Topic {
@@ -61,6 +69,8 @@ impl Topic {
             Self::MacroQc => wire::MACRO_QC.to_string(),
             Self::SlashEvidence => wire::SLASH_EVIDENCE.to_string(),
             Self::BlobChunk => wire::BLOB_CHUNK.to_string(),
+            Self::VertexProposal => wire::VERTEX_PROPOSAL.to_string(),
+            Self::VertexPartial => wire::VERTEX_PARTIAL.to_string(),
         }
     }
 
@@ -75,6 +85,8 @@ impl Topic {
             wire::MACRO_QC => Some(Self::MacroQc),
             wire::SLASH_EVIDENCE => Some(Self::SlashEvidence),
             wire::BLOB_CHUNK => Some(Self::BlobChunk),
+            wire::VERTEX_PROPOSAL => Some(Self::VertexProposal),
+            wire::VERTEX_PARTIAL => Some(Self::VertexPartial),
             s if s.starts_with(wire::BLS_PARTIAL_PREFIX) => {
                 let rest = s.strip_prefix(wire::BLS_PARTIAL_PREFIX)?;
                 let id = rest.parse().ok()?;

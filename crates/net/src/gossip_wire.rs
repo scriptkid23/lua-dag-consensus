@@ -10,7 +10,7 @@
 use consensus::action::Action;
 use consensus::event::{BlsPartial, Event, SubnetAggregate};
 use dag::blob::chunk::BlobChunk;
-use types::dag::CertifiedVertex;
+use types::dag::{CertifiedVertex, VertexPartial, VertexProposal};
 use types::macros::{MacroProposal, MacroQc};
 use types::micro::MicroQc;
 use types::slashing::SlashEvidence;
@@ -33,6 +33,15 @@ pub fn outbound_broadcast(action: &Action) -> Result<Option<(Topic, Vec<u8>)>> {
         Action::BroadcastMacroQc(q) => (Topic::MacroQc, encode_action_payload(q)?),
         Action::EmitSlashEvidence { evidence, .. } => {
             (Topic::SlashEvidence, encode_action_payload(evidence)?)
+        }
+        Action::BroadcastVertexProposal(p) => {
+            (Topic::VertexProposal, encode_action_payload(p)?)
+        }
+        Action::BroadcastVertexPartial(bp) => {
+            (Topic::VertexPartial, encode_action_payload(bp)?)
+        }
+        Action::BroadcastCertifiedVertex(cv) => {
+            (Topic::CertifiedVertex, encode_action_payload(cv)?)
         }
         Action::PersistMacroQc(_)
         | Action::PersistMacroCheckpoint(_)
@@ -80,6 +89,9 @@ pub fn is_broadcast(action: &Action) -> bool {
             | Action::BroadcastSubnetAggregate(_)
             | Action::BroadcastMacroQc(_)
             | Action::EmitSlashEvidence { .. }
+            | Action::BroadcastVertexProposal(_)
+            | Action::BroadcastVertexPartial(_)
+            | Action::BroadcastCertifiedVertex(_)
     )
 }
 
@@ -128,6 +140,14 @@ pub fn inbound_message(topic_str: &str, data: &[u8]) -> Result<Option<Event>> {
         Topic::CertifiedVertex => {
             let v: CertifiedVertex = decode_event_payload(data)?;
             Ok(Some(Event::CertifiedVertexReceived(v)))
+        }
+        Topic::VertexProposal => {
+            let p: VertexProposal = decode_event_payload(data)?;
+            Ok(Some(Event::VertexProposalReceived(p)))
+        }
+        Topic::VertexPartial => {
+            let bp: VertexPartial = decode_event_payload(data)?;
+            Ok(Some(Event::VertexPartialReceived(bp)))
         }
         Topic::BlobChunk => Ok(None),
     }
@@ -278,5 +298,80 @@ mod tests {
             .unwrap()
             .expect("chunk");
         assert_eq!(decoded, chunk);
+    }
+
+    fn vertex_proposal_fixture() -> types::dag::VertexProposal {
+        use types::dag::{Vertex, VertexProposal};
+        VertexProposal {
+            vertex: Vertex {
+                round: types::primitives::Round(1),
+                author: ValidatorId([4; 32]),
+                parents: vec![],
+                blobs: vec![],
+                hash: Hash32([5; 32]),
+            },
+            proposer_sig: BlsSig([6; 96]),
+        }
+    }
+
+    #[test]
+    fn vertex_proposal_roundtrips_on_wire() {
+        let p = vertex_proposal_fixture();
+        let (topic, bytes) =
+            outbound_broadcast(&Action::BroadcastVertexProposal(p.clone()))
+                .unwrap()
+                .unwrap();
+        assert_eq!(topic, Topic::VertexProposal);
+        let ev = inbound_message(&topic.ident().to_string(), &bytes)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ev, Event::VertexProposalReceived(got) if got == p));
+    }
+
+    #[test]
+    fn vertex_partial_roundtrips_on_wire() {
+        let bp = types::dag::VertexPartial {
+            vertex_hash: Hash32([5; 32]),
+            round: types::primitives::Round(1),
+            author: ValidatorId([4; 32]),
+            voter: ValidatorId([2; 32]),
+            sig: BlsSig([6; 96]),
+        };
+        let (topic, bytes) =
+            outbound_broadcast(&Action::BroadcastVertexPartial(bp.clone()))
+                .unwrap()
+                .unwrap();
+        assert_eq!(topic, Topic::VertexPartial);
+        let ev = inbound_message(&topic.ident().to_string(), &bytes)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ev, Event::VertexPartialReceived(got) if got == bp));
+    }
+
+    #[test]
+    fn broadcast_certified_vertex_action_maps_to_certified_vertex_topic() {
+        use types::dag::{CertifiedVertex, Vertex};
+        let cv = CertifiedVertex {
+            vertex: Vertex {
+                round: types::primitives::Round(1),
+                author: ValidatorId([4; 32]),
+                parents: vec![],
+                blobs: vec![],
+                hash: Hash32([5; 32]),
+            },
+            certificate: BlsAggSig {
+                sig: BlsSig([0; 96]),
+                bitmap: vec![0xFF],
+            },
+        };
+        let (topic, bytes) =
+            outbound_broadcast(&Action::BroadcastCertifiedVertex(cv.clone()))
+                .unwrap()
+                .unwrap();
+        assert_eq!(topic, Topic::CertifiedVertex);
+        let ev = inbound_message(&topic.ident().to_string(), &bytes)
+            .unwrap()
+            .unwrap();
+        assert!(matches!(ev, Event::CertifiedVertexReceived(got) if got == cv));
     }
 }

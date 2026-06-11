@@ -26,6 +26,9 @@ l1_driver_enabled = true
 # Real BLS vertex quorum certificates (plan 07a).
 l1_real_vertex_certs = true
 
+# L1 vertex production: "devnet_factory" (legacy driver) | "distributed" (06-04)
+vertex_protocol = "devnet_factory"
+
 # Blob payload custody + chunk gossip (plan 07b).
 l1_blob_custody_enabled = true
 blob_chunk_size_bytes = 65536

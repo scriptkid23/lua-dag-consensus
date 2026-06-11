@@ -28,6 +28,7 @@ pub mod ports;
 pub mod prelude;
 pub mod slashing;
 pub mod state_machine;
+pub mod vertex_cert;
 
 pub use action::Action;
 pub use config::Config;

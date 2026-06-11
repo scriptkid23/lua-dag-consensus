@@ -9,6 +9,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use crate::{
     crypto_types::{BlsSig, Hash32},
+    dag::{Vertex, VertexProposal},
     macros::checkpoint::MacroCheckpoint,
     primitives::{Epoch, ValidatorId},
 };
@@ -65,6 +66,30 @@ pub struct DoubleVote {
     pub b_sig: BlsSig,
 }
 
+/// Two vertex proposals signed by the same author at the same round
+/// with different content hashes (L1 double-propose, 06-04 design).
+#[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
+pub struct VertexEquivocation {
+    /// Offender (the vertex author).
+    pub validator: ValidatorId,
+    /// First conflicting vertex + proposer signature.
+    pub a: (Vertex, BlsSig),
+    /// Second conflicting vertex + proposer signature.
+    pub b: (Vertex, BlsSig),
+}
+
+impl VertexEquivocation {
+    /// Build evidence from two conflicting proposals at the same round.
+    #[must_use]
+    pub fn from_proposals(validator: ValidatorId, a: VertexProposal, b: VertexProposal) -> Self {
+        Self {
+            validator,
+            a: (a.vertex, a.proposer_sig),
+            b: (b.vertex, b.proposer_sig),
+        }
+    }
+}
+
 /// All slashing evidence variants.
 #[derive(Clone, Debug, Eq, PartialEq, BorshSerialize, BorshDeserialize)]
 pub enum SlashEvidence {
@@ -74,6 +99,8 @@ pub enum SlashEvidence {
     Surround(SurroundVote),
     /// Double vote on the same target epoch (50 %).
     DoubleVote(DoubleVote),
+    /// Equivocation on an L1 vertex proposal (100 %).
+    VertexEquivocation(VertexEquivocation),
 }
 
 #[cfg(test)]

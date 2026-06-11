@@ -111,23 +111,6 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         }
     });
 
-    let host_bundle = StubHostBundle::new(
-        &cfg.node.identity.label,
-        valset.clone(),
-        Arc::clone(&live_dag),
-        None,
-    )
-    .context("build host context bundle")?;
-    let beacon: Arc<ChainedBeacon> = Arc::clone(&host_bundle.beacon);
-    let action_applier = ActionApplier::new(
-        persistence.clone(),
-        timer_schedule_tx,
-        timer_registry,
-        beacon,
-        metrics.clone(),
-    );
-
-    // Consensus SM (after host ports are ready).
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // ─── Live swarm ────────────────────────────────────────────────────
@@ -198,6 +181,23 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         (Some(spawn.handle), spawn.ready)
     };
 
+    let host_bundle = StubHostBundle::new(
+        &cfg.node.identity.label,
+        valset.clone(),
+        Arc::clone(&live_dag),
+        None,
+        blob_custody_handle.clone(),
+    )
+    .context("build host context bundle")?;
+    let beacon: Arc<ChainedBeacon> = Arc::clone(&host_bundle.beacon);
+    let action_applier = ActionApplier::new(
+        persistence.clone(),
+        timer_schedule_tx,
+        timer_registry,
+        beacon,
+        metrics.clone(),
+    );
+
     let query = Arc::new(RocksConsensusQuery::new(
         persistence.clone(),
         Arc::clone(&live_dag),
@@ -221,31 +221,52 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
     )
     .await?;
 
-    if cfg.node.l1_driver_enabled {
-        let publish_tx = gossip_publish_tx.with_context(|| {
-            "l1_driver_enabled requires a live gossip swarm (not skeleton network mode)"
-        })?;
-        let round_ms = cfg.consensus.timing.round_duration_ms;
-        let driver = L1Driver::new(
-            valset.clone(),
-            cfg.consensus.clone(),
-            Arc::clone(&live_dag),
-            Arc::clone(&host_bundle.beacon),
-            events_tx.clone(),
-            publish_tx,
-            std::time::Duration::from_millis(round_ms),
-            cfg.node.l1_real_vertex_certs,
-            if cfg.node.l1_blob_custody_enabled {
-                blob_custody_handle.clone()
-            } else {
-                None
-            },
-            metrics.clone(),
-        );
-        tokio::spawn(async move {
-            driver.run().await;
-        });
-        info!(target: "node", round_duration_ms = round_ms, "L1 driver started");
+    match cfg.node.vertex_protocol {
+        crate::config_layers::VertexProtocol::Distributed => {
+            anyhow::ensure!(
+                cfg.node.l1_real_vertex_certs,
+                "vertex_protocol=\"distributed\" requires l1_real_vertex_certs=true"
+            );
+            anyhow::ensure!(
+                gossip_publish_tx.is_some(),
+                "vertex_protocol=\"distributed\" requires a live gossip swarm"
+            );
+            if cfg.node.l1_driver_enabled {
+                warn!(
+                    target: "node",
+                    "l1_driver_enabled ignored: vertex_protocol=\"distributed\" owns L1 produce"
+                );
+            }
+            info!(target: "node", "L1 distributed vertex certification active");
+        }
+        crate::config_layers::VertexProtocol::DevnetFactory => {
+            if cfg.node.l1_driver_enabled {
+                let publish_tx = gossip_publish_tx.with_context(|| {
+                    "l1_driver_enabled requires a live gossip swarm (not skeleton network mode)"
+                })?;
+                let round_ms = cfg.consensus.timing.round_duration_ms;
+                let driver = L1Driver::new(
+                    valset.clone(),
+                    cfg.consensus.clone(),
+                    Arc::clone(&live_dag),
+                    Arc::clone(&host_bundle.beacon),
+                    events_tx.clone(),
+                    publish_tx,
+                    std::time::Duration::from_millis(round_ms),
+                    cfg.node.l1_real_vertex_certs,
+                    if cfg.node.l1_blob_custody_enabled {
+                        blob_custody_handle.clone()
+                    } else {
+                        None
+                    },
+                    metrics.clone(),
+                );
+                tokio::spawn(async move {
+                    driver.run().await;
+                });
+                info!(target: "node", round_duration_ms = round_ms, "L1 driver started");
+            }
+        }
     }
 
     // Orchestrator.
@@ -260,6 +281,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         action_applier,
         valset,
         cfg.node.l1_real_vertex_certs,
+        cfg.node.vertex_protocol == crate::config_layers::VertexProtocol::Distributed,
     );
     let orch_task = tokio::spawn(orch.run());
 

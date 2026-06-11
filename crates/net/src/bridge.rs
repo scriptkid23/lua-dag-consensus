@@ -89,7 +89,10 @@ impl Bridge {
             | Action::BroadcastMacroProposal(_)
             | Action::BroadcastBlsPartial(_)
             | Action::BroadcastSubnetAggregate(_)
-            | Action::BroadcastMacroQc(_) => {
+            | Action::BroadcastMacroQc(_)
+            | Action::BroadcastVertexProposal(_)
+            | Action::BroadcastVertexPartial(_)
+            | Action::BroadcastCertifiedVertex(_) => {
                 // TODO(plan 06): map to `Topic` + `gossip::codec::encode_action_payload`
                 // + swarm publish. Skeleton: warn so silent drops are visible.
                 warn!(target: "net::bridge", "skeleton: dropping outbound broadcast action");

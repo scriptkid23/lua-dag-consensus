@@ -12,6 +12,7 @@ use crate::{
     event::Event,
     host_context::HostContext,
     macro_fin::MacroBook,
+    vertex_cert::VertexBook,
 };
 
 /// Up-to-sixteen outgoing actions per event keeps things stack-allocated
@@ -32,6 +33,8 @@ pub struct StateMachine {
     waves: WaveBook,
     /// L3 macro-finality bookkeeping (plan 03c-1).
     macros: MacroBook,
+    /// L1 distributed vertex certification (06-04 design).
+    vertices: VertexBook,
 }
 
 impl StateMachine {
@@ -44,6 +47,7 @@ impl StateMachine {
             emitted: EmittedSet::new(),
             waves: WaveBook::new(),
             macros: MacroBook::new(self_id),
+            vertices: VertexBook::new(self_id),
         }
     }
 
@@ -53,18 +57,39 @@ impl StateMachine {
         &self.cfg
     }
 
+    /// Bootstrap the distributed L1 path: propose the round-0 vertex.
+    /// Idempotent; hosts call it once before entering the event loop.
+    pub fn genesis_propose(&mut self, ctx: &HostContext<'_>) -> Result<Actions> {
+        crate::vertex_cert::genesis_propose(&mut self.vertices, &self.cfg, ctx)
+    }
+
+    /// Round of this node's latest own vertex proposal (sim/test probe).
+    #[must_use]
+    pub fn current_vertex_round(&self) -> u64 {
+        self.vertices.current_round()
+    }
+
     /// Drive one event through the state machine, returning any
     /// resulting [`Action`]s.
     pub fn step(&mut self, event: Event, ctx: &HostContext<'_>) -> Result<Actions> {
         match event {
             Event::CertifiedVertexReceived(cv) => {
-                let mut actions = crate::bullshark::on_certified_vertex(
+                let mut actions = Actions::new();
+                crate::vertex_cert::on_certified_vertex(
+                    &mut self.vertices,
+                    &self.cfg,
+                    &cv,
+                    ctx,
+                    &mut actions,
+                )?;
+                let bull = crate::bullshark::on_certified_vertex(
                     &mut self.emitted,
                     &mut self.waves,
                     &self.cfg,
                     cv,
                     ctx,
                 )?;
+                actions.extend(bull);
                 crate::macro_fin::on_local_micro_qcs(
                     &mut self.macros,
                     &self.cfg,
@@ -91,6 +116,13 @@ impl StateMachine {
                     id,
                     &mut actions,
                 )?;
+                crate::vertex_cert::on_timer_fired(
+                    &mut self.vertices,
+                    &self.cfg,
+                    ctx,
+                    id,
+                    &mut actions,
+                )?;
                 Ok(actions)
             }
             Event::MacroProposalReceived(p) => {
@@ -110,6 +142,18 @@ impl StateMachine {
             }
             Event::ValidatorSetUpdated { .. } => Ok(Actions::new()),
             Event::SlashEvidenceFound(_) => Ok(Actions::new()),
+            Event::VertexProposalReceived(p) => crate::vertex_cert::on_vertex_proposal(
+                &mut self.vertices,
+                &self.cfg,
+                p,
+                ctx,
+            ),
+            Event::VertexPartialReceived(bp) => crate::vertex_cert::on_vertex_partial(
+                &mut self.vertices,
+                &self.cfg,
+                bp,
+                ctx,
+            ),
         }
     }
 }
@@ -230,6 +274,7 @@ mod tests {
         static BEACON: FixedBeacon = FixedBeacon(types::crypto_types::Hash32::zero());
         static PERSIST: NoopPersistence = NoopPersistence;
         static SIGNER: crate::ports::PanickingSigner = crate::ports::PanickingSigner;
+        static NO_PENDING: crate::ports::NoPendingBlobs = crate::ports::NoPendingBlobs;
         HostContext {
             dag: &DAG,
             clock: &CLOCK,
@@ -237,6 +282,7 @@ mod tests {
             beacon: &BEACON,
             persistence: &PERSIST,
             signer: &SIGNER,
+            pending_blobs: &NO_PENDING,
         }
     }
 }

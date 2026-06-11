@@ -1,7 +1,7 @@
 # Distributed Vertex Certificate Protocol — Design
 
 **Date:** 2026-06-04
-**Status:** Approved (design) — pending implementation plan
+**Status:** Approved (design) — implementation plan: [`2026-06-11-distributed-vertex-certificate.md`](../plans/2026-06-11-distributed-vertex-certificate.md)
 **Topic:** Replace the host-side devnet vertex-certificate factory with a real distributed "collect ≥2f+1 BLS partials from peers" protocol.
 
 ## Problem

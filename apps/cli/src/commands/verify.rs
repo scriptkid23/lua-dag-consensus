@@ -22,5 +22,6 @@ fn kind_of(ev: &SlashEvidence) -> &'static str {
         SlashEvidence::MacroEquivocation(_) => "macro_equivocation",
         SlashEvidence::Surround(_) => "surround",
         SlashEvidence::DoubleVote(_) => "double_vote",
+        SlashEvidence::VertexEquivocation(_) => "vertex_equivocation",
     }
 }

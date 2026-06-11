@@ -20,6 +20,17 @@ use toml::Value;
 use net::NetConfig;
 use storage::StorageConfig;
 
+/// L1 vertex production path selector (06-04 design §5).
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VertexProtocol {
+    /// Distributed propose/partial/aggregate protocol.
+    Distributed,
+    /// Legacy host-side devnet factory (`L1Driver`).
+    #[default]
+    DevnetFactory,
+}
+
 /// Final parsed profile after all layers have been merged.
 #[derive(Debug, Deserialize)]
 pub struct ProfileFile {
@@ -52,6 +63,11 @@ pub struct NodeSection {
     /// When true, build real BLS quorum certs via `dag::cert` (07a).
     #[serde(default)]
     pub l1_real_vertex_certs: bool,
+    /// Which L1 vertex production path runs (06-04 design):
+    /// `"distributed"` = propose → partials → 2f+1 CV (production);
+    /// `"devnet_factory"` = legacy L1Driver fabrication (default).
+    #[serde(default)]
+    pub vertex_protocol: VertexProtocol,
     /// When true, spawn blob chunk custody + gossip ingress (07b).
     #[serde(default)]
     pub l1_blob_custody_enabled: bool,

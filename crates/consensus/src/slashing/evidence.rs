@@ -4,7 +4,7 @@ use types::{slashing::SlashEvidence, validator::ValidatorSet};
 
 use crate::error::Result;
 
-use super::{double_vote, equivocation, surround};
+use super::{double_vote, equivocation, surround, vertex_equivocation};
 
 /// Verify a slashing evidence bundle against a validator set snapshot.
 pub fn verify_evidence(ev: &SlashEvidence, set: &ValidatorSet) -> Result<()> {
@@ -12,5 +12,6 @@ pub fn verify_evidence(ev: &SlashEvidence, set: &ValidatorSet) -> Result<()> {
         SlashEvidence::MacroEquivocation(e) => equivocation::verify(e, set),
         SlashEvidence::Surround(e) => surround::verify(e, set),
         SlashEvidence::DoubleVote(e) => double_vote::verify(e, set),
+        SlashEvidence::VertexEquivocation(e) => vertex_equivocation::verify(e, set),
     }
 }

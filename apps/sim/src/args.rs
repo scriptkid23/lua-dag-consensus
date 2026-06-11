@@ -42,4 +42,6 @@ pub enum Scenario {
     ByzantineSplit,
     /// Network partition + healing.
     NetworkPartition,
+    /// Distributed vertex certification happy path (06-04).
+    VertexCertDistributed,
 }

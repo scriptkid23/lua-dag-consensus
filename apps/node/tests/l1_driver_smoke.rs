@@ -61,7 +61,7 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
     let metrics = Arc::new(Metrics::new().expect("metrics"));
     let sm = StateMachine::new(cfg.clone(), self_id);
     let host_bundle =
-        StubHostBundle::new("node0", valset.clone(), Arc::clone(&live_dag), None).unwrap();
+        StubHostBundle::new("node0", valset.clone(), Arc::clone(&live_dag), None, None).unwrap();
     let beacon = Arc::clone(&host_bundle.beacon);
     let action_applier = ActionApplier::new(
         persistence.clone(),
@@ -82,6 +82,7 @@ async fn l1_driver_advances_bullshark_to_micro_qc_broadcast() {
         action_applier,
         valset.clone(),
         true,
+        false,
     );
     tokio::spawn(orch.run());
 
