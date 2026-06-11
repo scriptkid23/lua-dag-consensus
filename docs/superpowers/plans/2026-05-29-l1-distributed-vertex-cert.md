@@ -1,5 +1,10 @@
 # L1 Distributed Vertex Certification — Implementation Plan
 
+> **SUPERSEDED (2026-06-11):** This plan implements the 2026-05-29 design, which was replaced by
+> [`2026-06-04-distributed-vertex-certificate-design.md`](../specs/2026-06-04-distributed-vertex-certificate-design.md)
+> (vertex_cert module in `crates/consensus`, proposer-only aggregation, cert-driven round advancement).
+> Do **not** execute this plan. Current plan: [`2026-06-11-distributed-vertex-certificate.md`](2026-06-11-distributed-vertex-certificate.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace centralized `L1Driver` with per-validator `AuthorLoop` + `CertCollector` so L1 produce matches the approved production path: proposal → partials → ≥ `2f+1` QC → verified `CertifiedVertex` → `LiveDag`.
