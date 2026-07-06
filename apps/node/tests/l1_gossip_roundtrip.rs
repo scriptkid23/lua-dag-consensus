@@ -9,11 +9,14 @@ use net::config::{GossipConfig, PeerConfig};
 use net::deterministic_key::devnet_keypair_from_label;
 use net::gossip_wire::encode_certified_vertex;
 use net::swarm_runner::{GossipSpawn, spawn_gossip_tasks};
-use node::{
-    devnet_keys::devnet_valset_four,
-    l1::vertex_builder::build_quorum_vertices_for_valset,
-};
+use dag::{cert, signing};
+use node::devnet_keys::devnet_valset_four;
 use tokio::sync::mpsc;
+use types::{
+    crypto_types::Hash32,
+    dag::Vertex,
+    primitives::Round,
+};
 
 fn loopback_cfg(bootstrap: Vec<String>) -> NetConfig {
     NetConfig {
@@ -57,10 +60,15 @@ async fn certified_vertex_round_trips_between_two_loopback_swarms() {
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
     let valset = devnet_valset_four();
-    let cv = build_quorum_vertices_for_valset(0, &valset, None, true)
-        .into_iter()
-        .next()
-        .expect("quorum batch non-empty");
+    let mut vertex = Vertex {
+        round: Round(0),
+        author: valset.entries[0].id,
+        parents: vec![],
+        blobs: vec![],
+        hash: Hash32([0u8; 32]),
+    };
+    signing::seal_hash(&mut vertex);
+    let cv = cert::build_quorum_cert(&vertex, &valset, &[0, 1, 2]).expect("quorum cert builds");
     let (topic, payload) = encode_certified_vertex(&cv).unwrap();
     spawn_a
         .publish_tx

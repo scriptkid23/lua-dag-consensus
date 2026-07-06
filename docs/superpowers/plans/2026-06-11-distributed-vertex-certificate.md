@@ -2,6 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **UPDATE (2026-07-06):** The `vertex_protocol` rollout flag and the legacy
+> `devnet_factory` path this plan kept as default were removed; distributed is now the
+> only L1 production path. See
+> [`2026-07-06-remove-devnet-factory-design.md`](../specs/2026-07-06-remove-devnet-factory-design.md).
+
 **Goal:** Implement the approved 2026-06-04 design: a `vertex_cert` module in `crates/consensus` (mirroring `macro_fin`) where each validator proposes its own vertex per round, peers return BLS partials, the proposer aggregates ≥ `2f+1` into a `CertifiedVertex`, and rounds advance cert-driven (Narwhal) — behind a `vertex_protocol` config flag with the legacy devnet factory as default.
 
 **Architecture:** New wire types `VertexProposal`/`VertexPartial` (`crates/types`), new `Event`/`Action` variants routed through the deterministic `StateMachine::step`, per-validator `VertexBook` state in `crates/consensus/src/vertex_cert/`. The proposer (only) collects partials and emits `Action::BroadcastCertifiedVertex`; the host orchestrator loops that cert back locally (gossipsub does not deliver one's own publish). Blob drain moves behind a new `PendingBlobSource` port on `HostContext`. `L1Driver` stays untouched behind `vertex_protocol = "devnet_factory"` (default) so all existing tests stay green.

@@ -107,7 +107,6 @@ async fn spawn_node0(custody_blob: Option<Vec<u8>>) -> Node0 {
         action_applier,
         valset,
         true,
-        true,
     );
     tokio::spawn(orch.run());
     Node0 {

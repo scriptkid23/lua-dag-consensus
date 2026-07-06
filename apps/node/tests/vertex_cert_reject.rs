@@ -1,26 +1,40 @@
-//! Tampered certified vertices must not verify when real certs are enabled.
+//! Tampered certified vertices must never verify.
 
 use dag::{cert, signing};
-use node::{
-    devnet_keys::devnet_valset_four,
-    l1::vertex_builder::{build_certified_vertex, sim_vertex_hash},
-};
+use node::devnet_keys::devnet_valset_four;
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
-    dag::Vertex,
+    dag::{CertifiedVertex, Vertex},
     primitives::Round,
 };
 
+fn fixture_certificate() -> BlsAggSig {
+    BlsAggSig {
+        sig: BlsSig([0xAB; 96]),
+        bitmap: vec![0xFF],
+    }
+}
+
 #[test]
-fn verify_rejects_fixture_cert_when_real_certs_enabled() {
+fn unsealed_hash_fails_verify() {
     let valset = devnet_valset_four();
     let author = valset.entries[0].id;
-    let cv = build_certified_vertex(0, author, None, false, &valset);
+    let vertex = Vertex {
+        round: Round(0),
+        author,
+        parents: vec![],
+        blobs: vec![],
+        hash: Hash32([0x11; 32]), // not the sealed content hash
+    };
+    let cv = CertifiedVertex {
+        vertex,
+        certificate: fixture_certificate(),
+    };
     assert!(cert::verify_certified_vertex(&cv, &valset).is_err());
 }
 
 #[test]
-fn fixture_hash_with_sealed_body_still_fails_bls_verify() {
+fn sealed_body_with_fixture_signature_fails_bls_verify() {
     let valset = devnet_valset_four();
     let author = valset.entries[0].id;
     let mut vertex = Vertex {
@@ -28,23 +42,28 @@ fn fixture_hash_with_sealed_body_still_fails_bls_verify() {
         author,
         parents: vec![],
         blobs: vec![],
-        hash: sim_vertex_hash(1, &author),
+        hash: Hash32([0u8; 32]),
     };
     signing::seal_hash(&mut vertex);
-    let cv = types::dag::CertifiedVertex {
+    let cv = CertifiedVertex {
         vertex,
-        certificate: BlsAggSig {
-            sig: BlsSig([0xAB; 96]),
-            bitmap: vec![0xFF],
-        },
+        certificate: fixture_certificate(),
     };
     assert!(cert::verify_certified_vertex(&cv, &valset).is_err());
 }
 
 #[test]
-fn real_cert_from_builder_verifies() {
+fn real_quorum_cert_verifies() {
     let valset = devnet_valset_four();
     let author = valset.entries[0].id;
-    let cv = build_certified_vertex(2, author, None, true, &valset);
+    let mut vertex = Vertex {
+        round: Round(2),
+        author,
+        parents: vec![],
+        blobs: vec![],
+        hash: Hash32([0u8; 32]),
+    };
+    signing::seal_hash(&mut vertex);
+    let cv = cert::build_quorum_cert(&vertex, &valset, &[0, 1, 2]).expect("quorum cert builds");
     cert::verify_certified_vertex(&cv, &valset).expect("real cert must verify");
 }

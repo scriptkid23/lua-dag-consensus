@@ -35,10 +35,10 @@ pub struct Orchestrator {
     /// Local side-effects (persist, timers, beacon).
     action_applier: ActionApplier,
     valset: ValidatorSet,
-    l1_real_vertex_certs: bool,
-    /// Distributed L1 path active: genesis-propose at startup and loop
-    /// own certified vertices back as local events.
-    vertex_protocol_distributed: bool,
+    /// Propose own vertices: genesis-propose at startup and loop own
+    /// certified vertices back as local events. `false` only in skeleton
+    /// mode (no gossip swarm) — the node then runs ingress-only.
+    propose_enabled: bool,
 }
 
 impl Orchestrator {
@@ -55,8 +55,7 @@ impl Orchestrator {
         host_bundle: StubHostBundle,
         action_applier: ActionApplier,
         valset: ValidatorSet,
-        l1_real_vertex_certs: bool,
-        vertex_protocol_distributed: bool,
+        propose_enabled: bool,
     ) -> Self {
         Self {
             sm,
@@ -68,8 +67,7 @@ impl Orchestrator {
             persistence,
             action_applier,
             valset,
-            l1_real_vertex_certs,
-            vertex_protocol_distributed,
+            propose_enabled,
         }
     }
 
@@ -105,7 +103,7 @@ impl Orchestrator {
 
     /// Main loop. Returns when `events_rx` is closed.
     pub async fn run(mut self) -> anyhow::Result<()> {
-        if self.vertex_protocol_distributed {
+        if self.propose_enabled {
             let ctx = crate::host_context::build_host_context(
                 &self.host_bundle,
                 &self.persistence,
@@ -122,16 +120,14 @@ impl Orchestrator {
                     let Some(event) = maybe_event else { break };
                     self.metrics.events_processed.inc();
                     if let Event::CertifiedVertexReceived(cv) = &event {
-                        if self.l1_real_vertex_certs {
-                            if let Err(e) = dag::cert::verify_certified_vertex(cv, &self.valset) {
-                                warn!(
-                                    target: "node::orchestrator",
-                                    error = %e,
-                                    "rejecting certified vertex"
-                                );
-                                self.metrics.vertex_cert_rejected.inc();
-                                continue;
-                            }
+                        if let Err(e) = dag::cert::verify_certified_vertex(cv, &self.valset) {
+                            warn!(
+                                target: "node::orchestrator",
+                                error = %e,
+                                "rejecting certified vertex"
+                            );
+                            self.metrics.vertex_cert_rejected.inc();
+                            continue;
                         }
                         if let Err(e) = self.host_bundle.dag.ingest(cv.clone()) {
                             warn!(
