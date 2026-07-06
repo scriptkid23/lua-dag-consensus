@@ -29,6 +29,8 @@ flowchart TD
             PQ[("Pending Queue<br/>blobs this node submitted<br/>awaiting anchor")]
             Proposer["vertex_cert Proposer<br/>drain_pending() → own proposal<br/>one vertex per validator per round"]
             CertBuilder["Certificate Protocol<br/>proposer aggregates ≥ 2f+1 BLS partials"]
+            FallbackTimer{{"Round Fallback Timer<br/>re-broadcast proposal, linear backoff (cap 8×)<br/>never jumps rounds"}}
+            Slashing["Equivocation Detector<br/>2 proposals same (round, author)<br/>→ VertexEquivocation evidence"]
             LiveDag["LiveDag / Orchestrator<br/>In-memory & DB"]
         end
 
@@ -46,7 +48,7 @@ flowchart TD
     RPC --> BCH
 
     %% Data plane: chunks fan out, then BCH enqueues directly
-    BCH -->|"split / encode"| RS
+    BCH -->|"encode shards"| RS
     RS -->|"put_chunk"| DB
     RS -->|"publish blob-chunk"| Gossip
     BCH ==>|"enqueue_pending(BlobRef)<br/>after chunks stored + gossiped"| PQ
@@ -61,6 +63,14 @@ flowchart TD
     Proposer -->|"broadcast VertexProposal"| Gossip
     Gossip -->|"VertexPartial (BLS)"| CertBuilder
     CertBuilder -->|"aggregate → CertifiedVertex"| LiveDag
+
+    %% Liveness: round stalls → re-broadcast own proposal
+    Proposer -.->|"arm on propose"| FallbackTimer
+    FallbackTimer -.->|"on stall: re-broadcast"| Gossip
+
+    %% Safety: conflicting proposals from a peer → slash evidence
+    Gossip -->|"VertexProposal (inbound)"| Slashing
+    Slashing -.->|"EmitSlashEvidence → persist + gossip"| Gossip
 
     %% Layer 1 → Layer 2
     LiveDag ==>|"Event::CertifiedVertexReceived<br/>(per-cert, wave-batched commit)"| Bullshark
