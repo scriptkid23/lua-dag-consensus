@@ -2,6 +2,7 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use types::{
+    dag::{CertifiedVertex, VertexPartial, VertexProposal},
     macros::{MacroCheckpoint, MacroProposal, MacroQc},
     micro::MicroQc,
     primitives::{BlobId, ValidatorId},
@@ -62,6 +63,14 @@ pub enum Action {
         /// Basis-points penalty rate for this window (Table 17.1).
         bps_per_window: u32,
     },
+    /// Broadcast this node's own vertex proposal (L1 distributed cert).
+    BroadcastVertexProposal(VertexProposal),
+    /// Broadcast a partial vote on a peer's vertex proposal.
+    BroadcastVertexPartial(VertexPartial),
+    /// Broadcast a fully aggregated certified vertex. The host MUST also
+    /// loop this back locally as `Event::CertifiedVertexReceived` —
+    /// gossipsub does not deliver one's own publish.
+    BroadcastCertifiedVertex(CertifiedVertex),
 }
 
 #[cfg(test)]

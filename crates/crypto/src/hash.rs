@@ -54,6 +54,8 @@ pub mod dst {
     pub const BLOB_RS_ROOT: &[u8] = b"lua-dag/v1/blob-rs-root";
     /// Internal merkle node combiner (L1 07c).
     pub const BLOB_MERKLE_NODE: &[u8] = b"lua-dag/v1/blob-merkle-node";
+    /// Vertex proposal authority signature (L1 distributed cert, 06-04).
+    pub const VERTEX_PROPOSAL: &[u8] = b"lua-dag/v1/vertex-proposal";
 }
 
 /// Blake3-256 over `data` with a DST prefix.

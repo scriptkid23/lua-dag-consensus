@@ -375,7 +375,8 @@ fn subscribe_set(macro_subnet_count: u32) -> Vec<Topic> {
         Topic::SubnetAggregate,
         Topic::MacroQc,
         Topic::SlashEvidence,
-        Topic::BlobChunk,
+        Topic::VertexProposal,
+        Topic::VertexPartial,
     ];
     // Flat mode uses subnet 0; Mode A subscribes 0..K_e.
     let partial_count = if macro_subnet_count == 0 {

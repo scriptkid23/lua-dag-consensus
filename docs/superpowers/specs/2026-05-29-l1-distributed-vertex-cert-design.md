@@ -1,7 +1,7 @@
 # Design: L1 distributed vertex certification (production-only path)
 
 **Date:** 2026-05-29  
-**Status:** **Approved (locked)** — plan: [`2026-05-29-l1-distributed-vertex-cert.md`](../plans/2026-05-29-l1-distributed-vertex-cert.md)  
+**Status:** **Superseded (2026-06-11)** by [`2026-06-04-distributed-vertex-certificate-design.md`](2026-06-04-distributed-vertex-certificate-design.md) — do **not** implement this design or its plan  
 **Audience:** Contributors replacing centralized `L1Driver` with per-validator L1 produce  
 **Relations:**
 - [`2026-05-23-l1-availability-dag-design.md`](2026-05-23-l1-availability-dag-design.md) — phases 07a–07c (verify, blob, erasure)

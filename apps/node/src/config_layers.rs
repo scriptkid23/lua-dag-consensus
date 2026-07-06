@@ -46,12 +46,6 @@ pub struct NodeSection {
     /// When true, `network_mode=live` no longer requires `--allow-skeleton-network` for L3.
     #[serde(default)]
     pub l3_wire_complete: bool,
-    /// When true, spawn the local L1 certified-vertex driver (plan 06b-L1).
-    #[serde(default)]
-    pub l1_driver_enabled: bool,
-    /// When true, build real BLS quorum certs via `dag::cert` (07a).
-    #[serde(default)]
-    pub l1_real_vertex_certs: bool,
     /// When true, spawn blob chunk custody + gossip ingress (07b).
     #[serde(default)]
     pub l1_blob_custody_enabled: bool,

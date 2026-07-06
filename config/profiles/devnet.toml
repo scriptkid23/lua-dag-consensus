@@ -20,12 +20,6 @@ validator_set_path = "config/valsets/devnet-4.toml"
 # L3 node production wiring complete (plan 06b-l3).
 l3_wire_complete = true
 
-# Local L1 vertex producer (plan 06b-L1).
-l1_driver_enabled = true
-
-# Real BLS vertex quorum certificates (plan 07a).
-l1_real_vertex_certs = true
-
 # Blob payload custody + chunk gossip (plan 07b).
 l1_blob_custody_enabled = true
 blob_chunk_size_bytes = 65536

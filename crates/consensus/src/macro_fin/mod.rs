@@ -899,6 +899,7 @@ mod tests {
             static CLOCK: FixedClock = FixedClock;
             static BEACON: ZeroBeacon = ZeroBeacon;
             static PERSIST: NoopP = NoopP;
+            static NO_PENDING: crate::ports::NoPendingBlobs = crate::ports::NoPendingBlobs;
             HostContext {
                 dag: &DAG,
                 clock: &CLOCK,
@@ -906,6 +907,7 @@ mod tests {
                 beacon: &BEACON,
                 persistence: &PERSIST,
                 signer,
+                pending_blobs: &NO_PENDING,
             }
         }
 

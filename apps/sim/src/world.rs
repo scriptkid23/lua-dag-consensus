@@ -62,6 +62,9 @@ pub struct World {
     key_ring: ValidatorKeyRing,
     /// Count of `NotifyInactivityLeak` actions applied across all validators.
     inactivity_leak_emitted: u32,
+    /// When true, vertices come from the distributed vertex_cert protocol
+    /// (genesis_propose + gossip) instead of the exogenous factory.
+    pub distributed_vertices: bool,
 }
 
 impl World {
@@ -116,7 +119,35 @@ impl World {
             suppress_macro_proposer: None,
             key_ring,
             inactivity_leak_emitted: 0,
+            distributed_vertices: false,
         }
+    }
+
+    /// Switch to distributed vertex production (06-04). Call before `run`.
+    pub fn enable_distributed_vertices(&mut self) {
+        self.distributed_vertices = true;
+    }
+
+    /// Clone validator `i`'s BLS secret (adversary tests only).
+    #[must_use]
+    pub fn key_ring_bls_secret(&self, i: usize) -> crypto::bls::SecretKey {
+        self.key_ring.bls_secret(i)
+    }
+
+    /// Minimum own-proposal round across all machines (distributed mode).
+    #[must_use]
+    pub fn min_vertex_round(&self) -> u64 {
+        self.machines
+            .iter()
+            .map(consensus::StateMachine::current_vertex_round)
+            .min()
+            .unwrap_or(0)
+    }
+
+    /// Total slash evidence records across all validators' persistence.
+    #[must_use]
+    pub fn slash_evidence_total(&self) -> usize {
+        self.slash_evidence_count()
     }
 
     /// Suppress macro proposals from `proposer` (sim adversary).
@@ -321,6 +352,42 @@ impl World {
                 } => {
                     self.inactivity_leak_emitted += 1;
                 }
+                Action::BroadcastVertexProposal(p) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastVertexProposal(p),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::BroadcastVertexPartial(bp) => {
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastVertexPartial(bp),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
+                Action::BroadcastCertifiedVertex(cv) => {
+                    // Shared DAG ingest + self-delivery: gossip skips the
+                    // sender, but the proposer must also see its own cert
+                    // (mirrors the node orchestrator loopback).
+                    self.dag.insert(cv.clone());
+                    self.step_validator(
+                        validator_idx,
+                        consensus::Event::CertifiedVertexReceived(cv.clone()),
+                        now,
+                    );
+                    self.net.enqueue_from_action(
+                        validator_idx,
+                        &Action::BroadcastCertifiedVertex(cv),
+                        n,
+                        now,
+                        &mut self.rng,
+                    );
+                }
             }
         }
     }
@@ -336,6 +403,7 @@ impl World {
         }
         let idx = validator_idx as usize;
         let signer = self.key_ring.signer(idx);
+        let no_pending = consensus::ports::NoPendingBlobs;
         let ctx = HostContext {
             dag: self.dag.as_ref(),
             clock: self.clock.as_ref(),
@@ -343,6 +411,7 @@ impl World {
             beacon: self.beacon.as_ref(),
             persistence: self.persistence[idx].as_ref(),
             signer: &signer,
+            pending_blobs: &no_pending,
         };
         let actions = self.machines[idx]
             .step(event, &ctx)
@@ -448,11 +517,39 @@ impl World {
     pub fn tick_round(&mut self) {
         let now = u64::try_from(self.clock.as_ref().now_nanos()).unwrap_or(u64::MAX);
         self.drain_net_and_apply(now);
-        self.produce_vertex_tick(now);
+        if self.distributed_vertices {
+            if self.virtual_round == 0 {
+                self.genesis_propose_all(now);
+            }
+        } else {
+            self.produce_vertex_tick(now);
+        }
         self.drain_timers_and_apply(now);
         let round_nanos = self.config.timing.round_duration_ms * 1_000_000;
         self.clock.advance(round_nanos);
         self.virtual_round += 1;
+    }
+
+    /// Genesis-propose on every machine (distributed mode bootstrap).
+    fn genesis_propose_all(&mut self, now: u64) {
+        for idx in 0..u32::try_from(self.machines.len()).expect("validator count") {
+            let i = idx as usize;
+            let signer = self.key_ring.signer(i);
+            let no_pending = consensus::ports::NoPendingBlobs;
+            let ctx = HostContext {
+                dag: self.dag.as_ref(),
+                clock: self.clock.as_ref(),
+                valset: self.valset.as_ref(),
+                beacon: self.beacon.as_ref(),
+                persistence: self.persistence[i].as_ref(),
+                signer: &signer,
+                pending_blobs: &no_pending,
+            };
+            let actions = self.machines[i]
+                .genesis_propose(&ctx)
+                .unwrap_or_else(|e| panic!("validator {idx} genesis failed: {e}"));
+            self.apply_actions(idx, actions, now);
+        }
     }
 
     /// Run `rounds` ticks.

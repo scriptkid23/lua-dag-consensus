@@ -4,9 +4,11 @@
 //! `crates/dag`) produces them, `consensus` consumes them read-only.
 
 pub mod certified;
+pub mod proposal;
 pub mod refs;
 pub mod vertex;
 
 pub use certified::CertifiedVertex;
+pub use proposal::{VertexPartial, VertexProposal};
 pub use refs::{BlobRef, ChunkRef};
 pub use vertex::Vertex;

@@ -152,6 +152,11 @@ impl VirtualNet {
             Action::BroadcastBlsPartial(bp) => Event::BlsPartialReceived(bp.clone()),
             Action::BroadcastMacroQc(qc) => Event::MacroQcReceived(qc.clone()),
             Action::BroadcastSubnetAggregate(a) => Event::SubnetAggregateReceived(a.clone()),
+            Action::BroadcastVertexProposal(p) => Event::VertexProposalReceived(p.clone()),
+            Action::BroadcastVertexPartial(bp) => Event::VertexPartialReceived(bp.clone()),
+            Action::BroadcastCertifiedVertex(cv) => {
+                Event::CertifiedVertexReceived(cv.clone())
+            }
             _ => return,
         };
         for recipient in 0..validator_count {

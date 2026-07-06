@@ -184,3 +184,36 @@ fn slashing_evidence_round_trip() {
         b_sig: BlsSig([1; 96]),
     }));
 }
+
+#[test]
+fn vertex_proposal_roundtrips_borsh() {
+    use types::dag::{Vertex, VertexProposal};
+    let p = VertexProposal {
+        vertex: Vertex {
+            round: types::primitives::Round(3),
+            author: types::primitives::ValidatorId([7; 32]),
+            parents: vec![types::crypto_types::Hash32([1; 32])],
+            blobs: vec![],
+            hash: types::crypto_types::Hash32([2; 32]),
+        },
+        proposer_sig: types::crypto_types::BlsSig([9; 96]),
+    };
+    let bytes = borsh::to_vec(&p).unwrap();
+    let back: VertexProposal = borsh::from_slice(&bytes).unwrap();
+    assert_eq!(back, p);
+}
+
+#[test]
+fn vertex_partial_roundtrips_borsh() {
+    use types::dag::VertexPartial;
+    let bp = VertexPartial {
+        vertex_hash: types::crypto_types::Hash32([2; 32]),
+        round: types::primitives::Round(3),
+        author: types::primitives::ValidatorId([7; 32]),
+        voter: types::primitives::ValidatorId([8; 32]),
+        sig: types::crypto_types::BlsSig([9; 96]),
+    };
+    let bytes = borsh::to_vec(&bp).unwrap();
+    let back: VertexPartial = borsh::from_slice(&bytes).unwrap();
+    assert_eq!(back, bp);
+}

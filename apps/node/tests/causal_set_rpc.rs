@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use node::{live_dag::LiveDag, query::RocksConsensusQuery};
 use storage::{config::StorageConfig, db::Database, RocksPersistence};
-use types::{crypto_types::Hash32, dag::Vertex, primitives::Round, ValidatorId};
+use types::{crypto_types::Hash32, dag::Vertex, primitives::{Round, ValidatorId}};
 
 fn sample_vertex(round: u64, author_byte: u8) -> types::dag::CertifiedVertex {
     types::dag::CertifiedVertex {

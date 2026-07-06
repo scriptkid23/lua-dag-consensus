@@ -14,6 +14,7 @@ pub mod inactivity_leak;
 pub mod mode_a_subnet;
 pub mod mode_b_fallback;
 pub mod network_partition;
+pub mod vertex_cert_distributed;
 
 /// Per-scenario report (JSON-rendered by `main.rs`).
 #[derive(Debug, Serialize)]
@@ -66,5 +67,8 @@ pub fn dispatch(args: &Args) -> Result<Report> {
         Scenario::InactivityLeak => inactivity_leak::run(args.validators, args.rounds, seed),
         Scenario::ByzantineSplit => byzantine_split::run(args.validators, args.rounds, seed),
         Scenario::NetworkPartition => network_partition::run(args.validators, args.rounds, seed),
+        Scenario::VertexCertDistributed => {
+            vertex_cert_distributed::run(args.validators, args.rounds, seed)
+        }
     })
 }

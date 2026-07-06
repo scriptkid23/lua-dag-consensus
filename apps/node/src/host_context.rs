@@ -19,11 +19,14 @@ use types::{
 };
 
 use crate::{
+    blob::BlobCustodyHandle,
     devnet_keys::validator_id_from_label,
     live_dag::LiveDag,
     signer::DevSigner,
     timer::TokioClock,
 };
+use consensus::ports::PendingBlobSource;
+use types::dag::BlobRef;
 
 /// Beacon chained on each locally persisted macro QC (mirrors sim).
 #[derive(Debug)]
@@ -95,6 +98,38 @@ impl ValidatorSetPort for CachedValidatorSet {
     }
 }
 
+/// `PendingBlobSource` over the node's blob custody queue.
+///
+/// `None` (custody disabled) drains nothing — proposals go out empty,
+/// preserving liveness.
+#[derive(Clone)]
+pub struct CustodyPendingBlobs(Option<BlobCustodyHandle>);
+
+impl std::fmt::Debug for CustodyPendingBlobs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustodyPendingBlobs")
+            .field("enabled", &self.0.is_some())
+            .finish()
+    }
+}
+
+impl CustodyPendingBlobs {
+    /// Wrap an optional custody handle.
+    #[must_use]
+    pub fn new(custody: Option<BlobCustodyHandle>) -> Self {
+        Self(custody)
+    }
+}
+
+impl PendingBlobSource for CustodyPendingBlobs {
+    fn drain(&self) -> Vec<BlobRef> {
+        self.0
+            .as_ref()
+            .map(BlobCustodyHandle::drain_pending)
+            .unwrap_or_default()
+    }
+}
+
 /// Owned host ports reused across orchestrator steps.
 #[derive(Debug)]
 pub struct StubHostBundle {
@@ -108,6 +143,8 @@ pub struct StubHostBundle {
     pub beacon: Arc<ChainedBeacon>,
     /// Dev-only local signer (plan 03d / 06b-l3 pubkey match).
     pub signer: DevSigner,
+    /// Pending-blob source for own-vertex proposals (06-04).
+    pub pending_blobs: CustodyPendingBlobs,
 }
 
 impl StubHostBundle {
@@ -117,6 +154,7 @@ impl StubHostBundle {
         valset: ValidatorSet,
         dag: Arc<LiveDag>,
         signer_key_path: Option<&Path>,
+        blob_custody: Option<BlobCustodyHandle>,
     ) -> AnyhowResult<Self> {
         let self_id = validator_id_from_label(label);
         let bls_pubkey = valset
@@ -132,6 +170,7 @@ impl StubHostBundle {
             valset: CachedValidatorSet::new(valset),
             beacon,
             signer: DevSigner::load_for_label(label, &bls_pubkey, signer_key_path)?,
+            pending_blobs: CustodyPendingBlobs::new(blob_custody),
         })
     }
 }
@@ -149,5 +188,6 @@ pub fn build_host_context<'a>(
         beacon: &*bundle.beacon,
         persistence,
         signer: &bundle.signer,
+        pending_blobs: &bundle.pending_blobs,
     }
 }

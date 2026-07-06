@@ -83,7 +83,8 @@ impl BlobCustodyHandle {
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Pop every queued `BlobRef` in FIFO order. Called by `L1Driver` each tick.
+    /// Pop every queued `BlobRef` in FIFO order. Drained by the `vertex_cert`
+    /// proposer (via `PendingBlobSource`) when building this node's proposal.
     #[must_use]
     pub fn drain_pending(&self) -> Vec<BlobRef> {
         let mut q = self.pending.lock().expect("lock");

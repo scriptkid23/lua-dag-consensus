@@ -94,7 +94,7 @@ fn host_bundle_signer_matches_valset() {
         .unwrap(),
     );
     let dag = Arc::new(LiveDag::new(db));
-    let bundle = StubHostBundle::new("node1", valset, dag, None).unwrap();
+    let bundle = StubHostBundle::new("node1", valset, dag, None, None).unwrap();
     assert!(
         bundle
             .signer

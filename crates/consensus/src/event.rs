@@ -8,7 +8,7 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use types::{
-    dag::CertifiedVertex,
+    dag::{CertifiedVertex, VertexPartial, VertexProposal},
     macros::{MacroProposal, MacroQc},
     micro::MicroQc,
     primitives::{Epoch, ValidatorId},
@@ -77,6 +77,10 @@ pub enum Event {
     },
     /// Slashing evidence was observed.
     SlashEvidenceFound(SlashEvidence),
+    /// A vertex proposal header arrived from a peer (L1 distributed cert).
+    VertexProposalReceived(VertexProposal),
+    /// A vertex partial vote arrived (routed to the proposal's author).
+    VertexPartialReceived(VertexPartial),
 }
 
 #[cfg(test)]

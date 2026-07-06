@@ -14,7 +14,6 @@ pub mod config;
 pub mod config_layers;
 pub mod devnet_keys;
 pub mod host_context;
-pub mod l1;
 pub mod live_dag;
 pub mod observability;
 pub mod orchestrator;

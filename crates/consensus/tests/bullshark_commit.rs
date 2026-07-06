@@ -218,6 +218,7 @@ fn host_context<'a>(
         beacon: beacon as &dyn RandomnessBeacon,
         persistence: persist,
         signer,
+        pending_blobs: &consensus::ports::NoPendingBlobs,
     }
 }
 

@@ -224,6 +224,7 @@ static TEST_CLOCK: TestClock = TestClock;
 static TEST_BEACON: FixedBeacon = FixedBeacon(Hash32([7u8; 32]));
 static TEST_PERSIST: NoopPersistence = NoopPersistence;
 static TEST_SIGNER: consensus::ports::PanickingSigner = consensus::ports::PanickingSigner;
+static NO_PENDING: consensus::ports::NoPendingBlobs = consensus::ports::NoPendingBlobs;
 
 #[test]
 fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
@@ -238,6 +239,7 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
         signer: &TEST_SIGNER,
+        pending_blobs: &NO_PENDING,
     };
     let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
@@ -270,6 +272,7 @@ fn micro_qc_assembled_twice_is_idempotent() {
         beacon: &TEST_BEACON,
         persistence: &TEST_PERSIST,
         signer: &TEST_SIGNER,
+        pending_blobs: &NO_PENDING,
     };
     let mut sm = StateMachine::new(cfg.clone(), ValidatorId::default());
     let trigger_round = Round(4 + u64::from(cfg.bullshark.shortcut_round_count));
