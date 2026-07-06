@@ -63,7 +63,8 @@ flowchart TD
     CertBuilder -->|"aggregate → CertifiedVertex"| LiveDag
 
     %% Layer 1 → Layer 2
-    LiveDag ==>|"causal_set(round_cut)"| Bullshark
+    LiveDag ==>|"Event::CertifiedVertexReceived<br/>(per-cert, wave-batched commit)"| Bullshark
+    LiveDag -.->|"causal_set(from,to)<br/>(read-only)"| RPCCausal["lua_getCausalSet RPC"]
     LiveDag -.->|"implements"| DagView
     DagView -.->|"consumed by"| Bullshark
 ```
