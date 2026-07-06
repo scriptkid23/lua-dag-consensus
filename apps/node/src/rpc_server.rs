@@ -53,7 +53,7 @@ async fn rpc(
     let result = match req.method.as_str() {
         "lua_getLatestFinalized" => latest_finalized(&state.query),
         "lua_getMacroCheckpointAt" => macro_checkpoint_at(&state.query, &req.params),
-        "lua_getBlobStatus" => blob_status_at(&state.query, &req.params),
+        "lua_getBlobStatus" => blob_status_at(&state.query, &state.blob, &req.params),
         "lua_submitBlob" => submit_blob(&state.blob, &req.params).await,
         "lua_getCausalSet" => causal_set(&state.query, &req.params),
         "lua_listBlobChunks" => list_blob_chunks(&state.blob, &req.params),
@@ -117,7 +117,14 @@ fn blob_status_wire_name(status: BlobStatus) -> &'static str {
     }
 }
 
-fn blob_status_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> serde_json::Value {
+/// `lua_getBlobStatus` — consensus lifecycle tier from `blob_status_store`
+/// plus `locally_available` read from the custody ledger (`null` when blob
+/// custody is disabled).
+pub fn blob_status_at(
+    query: &RocksConsensusQuery,
+    custody: &Option<BlobCustodyHandle>,
+    params: &serde_json::Value,
+) -> serde_json::Value {
     let Some(hex_raw) = params.get(0).and_then(|v| v.as_str()) else {
         return serde_json::Value::Null;
     };
@@ -135,6 +142,7 @@ fn blob_status_at(query: &RocksConsensusQuery, params: &serde_json::Value) -> se
         Ok(status) => serde_json::json!({
             "blob_id": format!("0x{}", hex::encode(id)),
             "status": blob_status_wire_name(status),
+            "locally_available": custody.as_ref().map(|c| c.is_available(&blob)),
         }),
         Err(e) => {
             warn!(target: "node::rpc", error = %e, "blob_status query failed");

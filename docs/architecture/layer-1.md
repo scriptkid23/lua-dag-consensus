@@ -54,7 +54,7 @@ flowchart TD
     %% Ledger is fed by BOTH local publish and gossip ingest
     RS -.->|"note_chunk (local)"| Ledger
     Gossip -->|"chunks from peers"| Ledger
-    Ledger -.->|"is_available()<br/>(read-only)"| RPCStatus["lua_blobStatus RPC"]
+    Ledger -.->|"is_available()<br/>(read-only, locally_available field)"| RPCStatus["lua_getBlobStatus RPC"]
 
     %% Control plane
     PQ -->|"Vec&lt;BlobRef&gt;"| Proposer
