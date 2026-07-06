@@ -206,10 +206,17 @@ fn four_validators_certify_genesis_and_advance_to_round_one() {
         route(i, actions, &mut queue, n);
     }
 
+    // Cert-driven advancement never idles: each completed round immediately
+    // proposes the next, so the queue never drains on a healthy protocol.
+    // Run until every machine reaches round 1 (the goal of this test); the
+    // step cap only trips if the protocol stalls or storms without progress.
     let mut steps = 0usize;
-    while let Some((i, event)) = queue.pop_front() {
+    while !machines.iter().all(|m| m.current_vertex_round() >= 1) {
+        let Some((i, event)) = queue.pop_front() else {
+            panic!("queue drained before all machines reached round 1");
+        };
         steps += 1;
-        assert!(steps < 10_000, "message storm — protocol not converging");
+        assert!(steps < 10_000, "no progress to round 1 within step budget");
         let signer = RingSigner { ring: &ring, idx: i };
         let ctx = HostContext {
             dag: &dag,
