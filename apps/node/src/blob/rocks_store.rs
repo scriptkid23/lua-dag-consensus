@@ -54,8 +54,6 @@ impl BlobStore for RocksBlobStore {
 }
 
 fn chunk_payload_bytes(chunk: &BlobChunk) -> &[u8] {
-    match &chunk.payload {
-        dag::blob::chunk::ChunkPayload::Sequential { data, .. }
-        | dag::blob::chunk::ChunkPayload::Erasure { data, .. } => data,
-    }
+    let dag::blob::chunk::ChunkPayload::Erasure { data, .. } = &chunk.payload;
+    data
 }

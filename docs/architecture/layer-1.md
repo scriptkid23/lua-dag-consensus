@@ -19,7 +19,7 @@ flowchart TD
 
         subgraph DataPlane["Data Plane (Blob Handling)"]
             direction TB
-            RS["Erasure Coding<br/>RS Rate 1/2, 32KB chunks"]
+            RS["Erasure Coding<br/>RS 4/8 (Rate 1/2), 32KB shards<br/>max blob 128KB"]
             DB[("RocksDB<br/>blob_chunk CF")]
             Ledger["Custody Ledger<br/>note_chunk() · tracks local chunk completeness<br/>(per-node, NOT quorum)"]
         end

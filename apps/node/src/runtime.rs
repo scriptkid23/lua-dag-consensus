@@ -261,12 +261,11 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
 
 fn blob_custody_config(node: &crate::config_layers::NodeSection) -> BlobCustodyConfig {
     BlobCustodyConfig {
-        chunk_size: node.blob_chunk_size_bytes,
-        erasure: node.l1_erasure_enabled.then(|| dag::erasure::ErasureConfig {
+        erasure: dag::erasure::ErasureConfig {
             k: node.erasure_k,
             n: node.erasure_n,
             data_shard_size: node.erasure_data_shard_size_bytes as usize,
-        }),
+        },
     }
 }
 

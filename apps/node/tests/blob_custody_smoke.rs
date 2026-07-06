@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use dag::blob::commit::blob_id_from_payload;
+use dag::erasure::ErasureConfig;
 use node::{
     blob::{BlobCustody, BlobCustodyConfig, RocksBlobStore},
     observability::metrics::Metrics,
@@ -42,8 +43,7 @@ async fn publish_marks_blob_available_and_persists_chunks() {
         chunks_rx,
         publish_tx,
         BlobCustodyConfig {
-            chunk_size: 65_536,
-            erasure: None,
+            erasure: ErasureConfig::devnet_default(),
         },
         metrics,
     );

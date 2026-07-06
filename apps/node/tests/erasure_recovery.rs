@@ -36,8 +36,7 @@ async fn erasure_publish_stores_all_shards_and_lists_chunk_refs() {
         chunks_rx,
         publish_tx,
         BlobCustodyConfig {
-            chunk_size: 65_536,
-            erasure: Some(cfg),
+            erasure: cfg,
         },
         metrics,
     );

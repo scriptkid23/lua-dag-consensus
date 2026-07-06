@@ -20,14 +20,12 @@ validator_set_path = "config/valsets/devnet-4.toml"
 # L3 node production wiring complete (plan 06b-l3).
 l3_wire_complete = true
 
-# Blob payload custody + chunk gossip (plan 07b).
+# Blob payload custody + shard gossip (07b/07c, erasure-only).
 l1_blob_custody_enabled = true
-blob_chunk_size_bytes = 65536
 
-# RS erasure-coded blob shards (plan 07c).
-l1_erasure_enabled = true
+# RS erasure parameters: rate 1/2, max blob = erasure_k * shard size = 128 KiB.
 erasure_k = 4
-erasure_n = 6
+erasure_n = 8
 erasure_data_shard_size_bytes = 32768
 
 [net]

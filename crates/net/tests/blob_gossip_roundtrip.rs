@@ -1,14 +1,30 @@
-//! Blob chunk encode/decode roundtrip on gossip wire (07b).
+//! Blob shard encode/decode roundtrip on gossip wire (07c).
 
-use dag::blob::chunk::split_payload;
+use dag::blob::chunk::erasure_chunks;
+use dag::blob::commit::blob_id_from_payload;
+use dag::erasure::{encode_shards, ErasureConfig};
 use net::gossip::Topic;
 use net::gossip_wire::{decode_blob_chunk, encode_blob_chunk};
 use types::primitives::BlobId;
 
+fn sample_chunks(payload: &[u8]) -> Vec<dag::blob::chunk::BlobChunk> {
+    let cfg = ErasureConfig {
+        k: 4,
+        n: 8,
+        data_shard_size: 32 * 1024,
+    };
+    let shards = encode_shards(payload, &cfg).unwrap();
+    erasure_chunks(
+        blob_id_from_payload(payload),
+        payload.len() as u64,
+        &shards,
+    )
+}
+
 #[test]
 fn blob_chunk_encode_decode_roundtrip() {
     let payload = vec![0xEFu8; 70_000];
-    let chunk = split_payload(&payload, 65_536).into_iter().next().unwrap();
+    let chunk = sample_chunks(&payload).into_iter().next().unwrap();
     let (topic, bytes) = encode_blob_chunk(&chunk).unwrap();
     assert_eq!(topic, Topic::BlobChunk);
     let decoded = decode_blob_chunk(&topic.wire_name(), &bytes)
@@ -26,8 +42,8 @@ fn decode_returns_none_for_other_topics() {
 #[test]
 fn chunk_carries_blob_id_and_index() {
     let payload = b"rollup-batch-v0";
-    let chunks = split_payload(payload, 32);
-    assert_eq!(chunks.len(), 1);
+    let chunks = sample_chunks(payload);
+    assert_eq!(chunks.len(), 8);
     assert_ne!(chunks[0].blob_id, BlobId([0; 32]));
     assert_eq!(chunks[0].index(), 0);
 }

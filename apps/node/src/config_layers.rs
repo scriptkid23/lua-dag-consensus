@@ -49,12 +49,6 @@ pub struct NodeSection {
     /// When true, spawn blob chunk custody + gossip ingress (07b).
     #[serde(default)]
     pub l1_blob_custody_enabled: bool,
-    /// Fixed chunk size for blob payload splitting (07b).
-    #[serde(default = "default_blob_chunk_size")]
-    pub blob_chunk_size_bytes: u32,
-    /// When true, publish RS erasure shards instead of sequential chunks (07c).
-    #[serde(default)]
-    pub l1_erasure_enabled: bool,
     /// RS data shard count (07c).
     #[serde(default = "default_erasure_k")]
     pub erasure_k: u32,
@@ -71,15 +65,11 @@ fn default_erasure_k() -> u32 {
 }
 
 fn default_erasure_n() -> u32 {
-    6
+    8
 }
 
 fn default_erasure_data_shard_size() -> u32 {
     32 * 1024
-}
-
-fn default_blob_chunk_size() -> u32 {
-    65_536
 }
 
 fn default_network_mode() -> String {

@@ -23,7 +23,7 @@ pub mod wire {
     pub const MACRO_QC: &str = "lua-dag/v1/macro-qc";
     /// Slashing evidence broadcast.
     pub const SLASH_EVIDENCE: &str = "lua-dag/v1/slash-evidence";
-    /// Sequential blob payload chunk stream (L1 07b).
+    /// Blob erasure shard stream (07c).
     pub const BLOB_CHUNK: &str = "lua-dag/v1/blob-chunk";
     /// Vertex proposal headers (L1 distributed cert, 06-04).
     pub const VERTEX_PROPOSAL: &str = "lua-dag/v1/vertex-proposal";
@@ -48,7 +48,7 @@ pub enum Topic {
     MacroQc,
     /// Slashing evidence broadcast.
     SlashEvidence,
-    /// Sequential blob payload chunk stream (L1 07b).
+    /// Blob erasure shard stream (07c).
     BlobChunk,
     /// Vertex proposal headers (L1 distributed cert).
     VertexProposal,

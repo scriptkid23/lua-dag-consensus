@@ -3,7 +3,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dag::blob::chunk::split_payload;
+use dag::blob::chunk::erasure_chunks;
+use dag::erasure::{encode_shards, ErasureConfig};
 use net::NetConfig;
 use net::config::{GossipConfig, PeerConfig};
 use net::deterministic_key::devnet_keypair_from_label;
@@ -83,15 +84,16 @@ async fn blob_chunks_roundtrip_between_two_loopback_swarms() {
         blob_rx_b,
         spawn_b.publish_tx.clone(),
         BlobCustodyConfig {
-            chunk_size: 65_536,
-            erasure: None,
+            erasure: ErasureConfig::devnet_default(),
         },
         metrics,
     );
 
     let payload = vec![0xCDu8; 100_000];
     let blob_id = dag::blob::commit::blob_id_from_payload(&payload);
-    let chunks = split_payload(&payload, 65_536);
+    let cfg = ErasureConfig::devnet_default();
+    let shards = encode_shards(&payload, &cfg).unwrap();
+    let chunks = erasure_chunks(blob_id, payload.len() as u64, &shards);
     for chunk in &chunks {
         let (topic, bytes) = encode_blob_chunk(chunk).unwrap();
         spawn_a

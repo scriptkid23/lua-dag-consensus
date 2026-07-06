@@ -6,8 +6,8 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use dag::blob::chunk::{erasure_chunks, split_payload, BlobChunk, ChunkPayload};
-use dag::blob::commit::{blob_commitment, blob_id_from_payload};
+use dag::blob::chunk::{erasure_chunks, BlobChunk, ChunkPayload};
+use dag::blob::commit::blob_id_from_payload;
 use dag::blob::custody::CustodyLedger;
 use dag::blob::store::BlobStore;
 use dag::erasure::{encode_shards, rs_merkle_commitment, ErasureConfig};
@@ -20,13 +20,12 @@ use crate::observability::metrics::Metrics;
 
 pub use rocks_store::RocksBlobStore;
 
-/// Publish + custody configuration.
+/// Publish + custody configuration (erasure-only).
 #[derive(Clone, Debug)]
 pub struct BlobCustodyConfig {
-    /// Sequential chunk size when erasure is disabled (07b).
-    pub chunk_size: u32,
-    /// RS parameters when erasure is enabled (07c).
-    pub erasure: Option<ErasureConfig>,
+    /// RS parameters; every blob is encoded to `n` shards of
+    /// `data_shard_size` bytes, max payload `k * data_shard_size`.
+    pub erasure: ErasureConfig,
 }
 
 /// Shared handle for RPC publish + L1 driver pending-attach drain.
@@ -55,25 +54,23 @@ impl BlobCustodyHandle {
         self.ledger.lock().expect("lock").is_available(blob_id)
     }
 
-    /// Chunk/shard count for a payload at the configured mode.
+    /// Shard count for every published blob (`n`).
     #[must_use]
-    pub fn unit_count_for(&self, size_bytes: u64) -> u32 {
-        if let Some(cfg) = &self.config.erasure {
-            cfg.n
-        } else {
-            dag::blob::chunk::chunk_count(size_bytes, self.config.chunk_size)
-        }
+    pub fn unit_count(&self) -> u32 {
+        self.config.erasure.n
     }
 
-    /// Commitment for `BlobRef` under the active mode.
+    /// Maximum accepted payload size in bytes (`k * data_shard_size`).
+    #[must_use]
+    pub fn max_payload_bytes(&self) -> u64 {
+        self.config.erasure.padded_len() as u64
+    }
+
+    /// RS-Merkle commitment carried in `BlobRef`.
     #[must_use]
     pub fn blob_ref_commitment(&self, payload: &[u8]) -> Hash32 {
-        if let Some(cfg) = &self.config.erasure {
-            let shards = encode_shards(payload, cfg).expect("encode shards");
-            rs_merkle_commitment(&shards)
-        } else {
-            blob_commitment(payload)
-        }
+        let shards = encode_shards(payload, &self.config.erasure).expect("encode shards");
+        rs_merkle_commitment(&shards)
     }
 
     /// List stored chunk refs for a blob.
@@ -99,12 +96,8 @@ impl BlobCustodyHandle {
     pub async fn publish_payload(&self, payload: Vec<u8>) -> Result<BlobId> {
         let blob_id = blob_id_from_payload(&payload);
         let size_bytes = u64::try_from(payload.len()).expect("payload fits u64");
-        let chunks = if let Some(cfg) = &self.config.erasure {
-            let shards = encode_shards(&payload, cfg)?;
-            erasure_chunks(blob_id, size_bytes, &shards)
-        } else {
-            split_payload(&payload, self.config.chunk_size)
-        };
+        let shards = encode_shards(&payload, &self.config.erasure)?;
+        let chunks = erasure_chunks(blob_id, size_bytes, &shards);
 
         for chunk in chunks {
             let (topic, bytes) = encode_blob_chunk(&chunk)?;
@@ -197,18 +190,10 @@ impl BlobCustody {
 fn register_chunk_in_ledger(
     ledger: &mut CustodyLedger,
     chunk: &BlobChunk,
-    erasure: Option<ErasureConfig>,
+    erasure: ErasureConfig,
 ) {
-    match &chunk.payload {
-        ChunkPayload::Sequential { total_chunks, .. } => {
-            ledger.register_sequential(chunk.blob_id, *total_chunks, chunk.size_bytes);
-        }
-        ChunkPayload::Erasure { n_shards, .. } => {
-            if let Some(cfg) = erasure {
-                ledger.register_erasure(chunk.blob_id, cfg, *n_shards, chunk.size_bytes);
-            }
-        }
-    }
+    let ChunkPayload::Erasure { n_shards, .. } = &chunk.payload;
+    ledger.register_erasure(chunk.blob_id, erasure, *n_shards, chunk.size_bytes);
 }
 
 #[cfg(test)]
@@ -240,8 +225,11 @@ mod tests {
             chunks_rx,
             publish_tx,
             BlobCustodyConfig {
-                chunk_size: 1024,
-                erasure: None,
+                erasure: dag::erasure::ErasureConfig {
+                    k: 4,
+                    n: 8,
+                    data_shard_size: 1024,
+                },
             },
             metrics,
         )

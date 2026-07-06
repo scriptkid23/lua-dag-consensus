@@ -63,8 +63,11 @@ async fn spawn_node0(custody_blob: Option<Vec<u8>>) -> Node0 {
             chunks_rx,
             publish_tx,
             BlobCustodyConfig {
-                chunk_size: 1024,
-                erasure: None,
+                erasure: dag::erasure::ErasureConfig {
+                    k: 4,
+                    n: 8,
+                    data_shard_size: 1024,
+                },
             },
             metrics.clone(),
         );

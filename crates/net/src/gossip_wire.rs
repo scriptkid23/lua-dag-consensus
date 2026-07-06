@@ -289,9 +289,23 @@ mod tests {
 
     #[test]
     fn blob_chunk_encode_decode_roundtrip() {
-        use dag::blob::chunk::split_payload;
+        use dag::blob::chunk::erasure_chunks;
+        use dag::erasure::{encode_shards, ErasureConfig};
         let payload = vec![0xEFu8; 70_000];
-        let chunk = split_payload(&payload, 65_536).into_iter().next().unwrap();
+        let cfg = ErasureConfig {
+            k: 4,
+            n: 8,
+            data_shard_size: 32 * 1024,
+        };
+        let shards = encode_shards(&payload, &cfg).unwrap();
+        let chunk = erasure_chunks(
+            dag::blob::commit::blob_id_from_payload(&payload),
+            payload.len() as u64,
+            &shards,
+        )
+        .into_iter()
+        .next()
+        .unwrap();
         let (topic, bytes) = encode_blob_chunk(&chunk).unwrap();
         assert_eq!(topic, Topic::BlobChunk);
         let decoded = decode_blob_chunk(&topic.wire_name(), &bytes)

@@ -10,12 +10,12 @@ pub struct ErasureConfig {
 }
 
 impl ErasureConfig {
-    /// Devnet defaults: 4 data + 2 parity shards, 32 KiB each.
+    /// Devnet defaults: 4 data + 4 parity shards (rate 1/2), 32 KiB each.
     #[must_use]
     pub fn devnet_default() -> Self {
         Self {
             k: 4,
-            n: 6,
+            n: 8,
             data_shard_size: 32 * 1024,
         }
     }

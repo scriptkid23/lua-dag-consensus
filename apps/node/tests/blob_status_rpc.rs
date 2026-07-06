@@ -40,8 +40,11 @@ fn spawn_custody(db: &Arc<Database>) -> BlobCustodyHandle {
         chunks_rx,
         publish_tx,
         BlobCustodyConfig {
-            chunk_size: 1024,
-            erasure: None,
+            erasure: dag::erasure::ErasureConfig {
+                k: 4,
+                n: 8,
+                data_shard_size: 1024,
+            },
         },
         Arc::new(Metrics::new().unwrap()),
     )

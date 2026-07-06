@@ -151,7 +151,10 @@ pub fn blob_status_at(
     }
 }
 
-async fn submit_blob(
+/// `lua_submitBlob` — publish a payload through blob custody. Rejects
+/// payloads above the erasure capacity (`k * data_shard_size`) with an
+/// explicit `error` field; returns `null` when custody is disabled.
+pub async fn submit_blob(
     blob: &Option<BlobCustodyHandle>,
     params: &serde_json::Value,
 ) -> serde_json::Value {
@@ -165,8 +168,14 @@ async fn submit_blob(
     let Ok(payload) = hex::decode(hex_str) else {
         return serde_json::Value::Null;
     };
-    let size_bytes = u64::try_from(payload.len()).unwrap_or(0);
-    let chunk_count = custody.unit_count_for(size_bytes);
+    let size_bytes = u64::try_from(payload.len()).unwrap_or(u64::MAX);
+    let max = custody.max_payload_bytes();
+    if size_bytes > max {
+        return serde_json::json!({
+            "error": format!("payload exceeds max blob size ({max} bytes)"),
+        });
+    }
+    let chunk_count = custody.unit_count();
     match custody.publish_payload(payload).await {
         Ok(blob_id) => serde_json::json!({
             "blob_id": format!("0x{}", hex::encode(blob_id.0)),
