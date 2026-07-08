@@ -35,9 +35,9 @@ use crate::transport::build_transport_tcp_only;
 
 const EVENT_BUFFER: usize = 1024;
 
-/// Internal behaviour wrapping just gossipsub for the devnet profile.
+/// libp2p behaviour bundle for LUA-DAG (gossipsub today; req-resp/discovery later).
 #[derive(NetworkBehaviour)]
-struct DevnetBehaviour {
+struct LuaDagBehaviour {
     gossipsub: gossipsub::Behaviour,
 }
 
@@ -99,7 +99,7 @@ pub async fn spawn_gossip_tasks(
     let local_peer_id = keypair.public().to_peer_id();
     let mut swarm = Swarm::new(
         transport,
-        DevnetBehaviour { gossipsub },
+        LuaDagBehaviour { gossipsub },
         local_peer_id,
         libp2p::swarm::Config::with_tokio_executor(),
     );
@@ -232,7 +232,7 @@ pub async fn spawn_gossip_tasks(
                             "incoming connection handshake failed",
                         );
                     }
-                    SwarmEvent::Behaviour(DevnetBehaviourEvent::Gossipsub(gs_ev)) => match gs_ev {
+                    SwarmEvent::Behaviour(LuaDagBehaviourEvent::Gossipsub(gs_ev)) => match gs_ev {
                         gossipsub::Event::Message { message, .. } => {
                             match gossip_wire::decode_blob_chunk(
                                 message.topic.as_str(),
