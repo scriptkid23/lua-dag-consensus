@@ -280,4 +280,82 @@ label = "node3"
         let parsed = load_layered(dir.path(), "devnet", &[override_path]).unwrap();
         assert_eq!(parsed.node.identity.label, "from-override");
     }
+
+    #[test]
+    fn node_fields_before_identity_subtable() {
+        // TOML: keys after `[node.identity]` belong to `node.identity`, not `[node]`.
+        // The devnet profile keeps `[node]` scalars above `[node.identity]` for this reason.
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "profiles/devnet.toml",
+            r#"
+[node]
+network_mode = "live"
+l3_wire_complete = true
+validator_set_path = "config/valsets/devnet-4.toml"
+
+[node.identity]
+kind = "devnet_seed"
+label = "node0"
+
+[net]
+listen = ["/ip4/0.0.0.0/tcp/9000"]
+bootstrap = []
+
+[net.gossip]
+heartbeat_ms = 700
+mesh_n = 8
+mesh_n_low = 6
+mesh_n_high = 12
+
+[net.peers]
+max_peers = 64
+ban_duration_secs = 600
+"#,
+        );
+        let parsed = load_layered(dir.path(), "devnet", &[]).unwrap();
+        assert!(parsed.node.l3_wire_complete);
+        assert_eq!(
+            parsed.node.validator_set_path,
+            PathBuf::from("config/valsets/devnet-4.toml")
+        );
+    }
+
+    #[test]
+    fn keys_after_identity_subtable_do_not_populate_node_section() {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            "profiles/devnet.toml",
+            r#"
+[node]
+network_mode = "live"
+
+[node.identity]
+kind = "devnet_seed"
+label = "node0"
+l3_wire_complete = true
+
+[net]
+listen = ["/ip4/0.0.0.0/tcp/9000"]
+bootstrap = []
+
+[net.gossip]
+heartbeat_ms = 700
+mesh_n = 8
+mesh_n_low = 6
+mesh_n_high = 12
+
+[net.peers]
+max_peers = 64
+ban_duration_secs = 600
+"#,
+        );
+        let parsed = load_layered(dir.path(), "devnet", &[]).unwrap();
+        assert!(
+            !parsed.node.l3_wire_complete,
+            "l3_wire_complete under [node.identity] must not satisfy the live-mode gate"
+        );
+    }
 }
