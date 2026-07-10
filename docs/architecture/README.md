@@ -8,3 +8,8 @@ The folder architecture spec lives in
 
 ADRs are numbered sequentially (`0001-...md`, `0002-...md`) and follow the
 Michael Nygard template: Context → Decision → Status → Consequences.
+
+## Performance runbooks
+
+- [LiveDag high-traffic scaling](../performance/live-dag-high-traffic.md) —
+  when to move beyond `RwLock<HashMap>` + `Arc`, DashMap migration, metrics.
