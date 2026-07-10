@@ -1,7 +1,7 @@
 //! Integration: Bullshark wave commit emits `BroadcastMicroQc`.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use consensus::{
     Config, HostContext, StateMachine,
@@ -12,15 +12,15 @@ use consensus::{
 use crypto::hash::{blake3_with_dst, dst};
 use types::{
     crypto_types::{BlsAggSig, BlsPubkey, BlsSig, Hash32},
-    dag::{CertifiedVertex, Vertex},
+    dag::{CertifiedVertex, SharedCertifiedVertex, Vertex},
     micro::MicroQc,
     primitives::{Epoch, Round, StakeWeight, ValidatorId},
     validator::{ValidatorEntry, ValidatorIdentity, ValidatorSet},
 };
 
 struct HashMapDag {
-    by_hash: RwLock<HashMap<Hash32, CertifiedVertex>>,
-    by_round: Mutex<HashMap<Round, Vec<CertifiedVertex>>>,
+    by_hash: RwLock<HashMap<Hash32, SharedCertifiedVertex>>,
+    by_round: Mutex<HashMap<Round, Vec<SharedCertifiedVertex>>>,
 }
 
 impl HashMapDag {
@@ -32,24 +32,25 @@ impl HashMapDag {
     }
 
     fn insert(&self, v: CertifiedVertex) {
-        let hash = v.vertex.hash;
-        let round = v.vertex.round;
+        let shared = Arc::new(v);
+        let hash = shared.vertex.hash;
+        let round = shared.vertex.round;
         self.by_round
             .lock()
             .unwrap()
             .entry(round)
             .or_default()
-            .push(v.clone());
-        self.by_hash.write().unwrap().insert(hash, v);
+            .push(Arc::clone(&shared));
+        self.by_hash.write().unwrap().insert(hash, shared);
     }
 }
 
 impl DagView for HashMapDag {
-    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<CertifiedVertex>> {
+    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<SharedCertifiedVertex>> {
         Ok(self.by_hash.read().unwrap().get(hash).cloned())
     }
 
-    fn vertices_at_round(&self, round: Round) -> consensus::Result<Vec<CertifiedVertex>> {
+    fn vertices_at_round(&self, round: Round) -> consensus::Result<Vec<SharedCertifiedVertex>> {
         Ok(self
             .by_round
             .lock()
@@ -249,7 +250,10 @@ fn certified_vertex_triggers_broadcast_micro_qc_four_validators() {
         .next()
         .unwrap();
     let actions = sm
-        .step(consensus::event::Event::CertifiedVertexReceived(v), &ctx)
+        .step(
+            consensus::event::Event::CertifiedVertexReceived((*v).clone()),
+            &ctx,
+        )
         .unwrap();
     assert!(
         actions
@@ -283,7 +287,7 @@ fn micro_qc_assembled_twice_is_idempotent() {
         .unwrap();
     let first = sm
         .step(
-            consensus::event::Event::CertifiedVertexReceived(v.clone()),
+            consensus::event::Event::CertifiedVertexReceived((*v).clone()),
             &ctx,
         )
         .unwrap();

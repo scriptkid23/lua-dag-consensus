@@ -8,7 +8,7 @@ pub mod proposal;
 pub mod refs;
 pub mod vertex;
 
-pub use certified::CertifiedVertex;
+pub use certified::{CertifiedVertex, SharedCertifiedVertex};
 pub use proposal::{VertexPartial, VertexProposal};
 pub use refs::{BlobRef, ChunkRef};
 pub use vertex::Vertex;

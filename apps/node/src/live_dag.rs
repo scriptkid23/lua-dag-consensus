@@ -7,15 +7,15 @@ use consensus::ports::DagView;
 use storage::{db::Database, stores::vertex_store};
 use types::{
     crypto_types::Hash32,
-    dag::CertifiedVertex,
+    dag::{CertifiedVertex, SharedCertifiedVertex},
     primitives::{Round, ValidatorId},
 };
 
 /// Thread-safe DAG backed by memory and the `vertex` column family.
 #[derive(Debug)]
 pub struct LiveDag {
-    by_hash: RwLock<HashMap<Hash32, CertifiedVertex>>,
-    by_round: RwLock<HashMap<Round, Vec<CertifiedVertex>>>,
+    by_hash: RwLock<HashMap<Hash32, SharedCertifiedVertex>>,
+    by_round: RwLock<HashMap<Round, Vec<SharedCertifiedVertex>>>,
     db: Arc<Database>,
 }
 
@@ -35,15 +35,19 @@ impl LiveDag {
         vertex_store::put(&self.db, &v).map_err(|e| {
             consensus::Error::Persistence(format!("store certified vertex: {e}"))
         })?;
-        let hash = v.vertex.hash;
-        let round = v.vertex.round;
-        self.by_hash.write().expect("dag hash lock").insert(hash, v.clone());
+        let shared = Arc::new(v);
+        let hash = shared.vertex.hash;
+        let round = shared.vertex.round;
+        self.by_hash
+            .write()
+            .expect("dag hash lock")
+            .insert(hash, Arc::clone(&shared));
         self.by_round
             .write()
             .expect("dag round lock")
             .entry(round)
             .or_default()
-            .push(v);
+            .push(shared);
         Ok(())
     }
 
@@ -57,20 +61,23 @@ impl LiveDag {
         let v = vertex_store::get(&self.db, round, author).map_err(|e| {
             consensus::Error::Persistence(format!("load certified vertex: {e}"))
         })?;
-        if let Some(ref vertex) = v {
-            let hash = vertex.vertex.hash;
+        if let Some(vertex) = v {
+            let ret = vertex.clone();
+            let shared = Arc::new(vertex);
+            let hash = shared.vertex.hash;
             self.by_hash
                 .write()
                 .expect("dag hash lock")
-                .insert(hash, vertex.clone());
+                .insert(hash, Arc::clone(&shared));
             self.by_round
                 .write()
                 .expect("dag round lock")
                 .entry(round)
                 .or_default()
-                .push(vertex.clone());
+                .push(shared);
+            return Ok(Some(ret));
         }
-        Ok(v)
+        Ok(None)
     }
 
     /// Certified vertex hashes in `from..=to` from the live L1 DAG index.
@@ -92,25 +99,23 @@ impl LiveDag {
 }
 
 impl DagView for LiveDag {
-    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<CertifiedVertex>> {
-        if let Some(v) = self.by_hash.read().expect("dag hash lock").get(hash).cloned() {
-            return Ok(Some(v));
-        }
-        Ok(None)
+    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<SharedCertifiedVertex>> {
+        Ok(self
+            .by_hash
+            .read()
+            .expect("dag hash lock")
+            .get(hash)
+            .cloned())
     }
 
-    fn vertices_at_round(&self, round: Round) -> consensus::Result<Vec<CertifiedVertex>> {
-        let cached = self
+    fn vertices_at_round(&self, round: Round) -> consensus::Result<Vec<SharedCertifiedVertex>> {
+        Ok(self
             .by_round
             .read()
             .expect("dag round lock")
             .get(&round)
             .cloned()
-            .unwrap_or_default();
-        if !cached.is_empty() {
-            return Ok(cached);
-        }
-        Ok(vec![])
+            .unwrap_or_default())
     }
 }
 
@@ -151,7 +156,26 @@ mod tests {
         let v = sample_vertex(3, 7);
         dag.ingest(v.clone()).unwrap();
         let got = dag.vertex(&v.vertex.hash).unwrap().unwrap();
-        assert_eq!(got, v);
+        assert_eq!(*got, v);
         assert_eq!(dag.vertices_at_round(Round(3)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ingest_shares_one_allocation_across_indexes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(
+            Database::open(&StorageConfig {
+                path: dir.path().to_path_buf(),
+                create_if_missing: true,
+                max_total_wal_size_mb: 16,
+            })
+            .unwrap(),
+        );
+        let dag = LiveDag::new(db);
+        let v = sample_vertex(1, 2);
+        dag.ingest(v).unwrap();
+        let by_hash = dag.vertex(&Hash32([2; 32])).unwrap().unwrap();
+        let by_round = dag.vertices_at_round(Round(1)).unwrap().pop().unwrap();
+        assert!(Arc::ptr_eq(&by_hash, &by_round));
     }
 }

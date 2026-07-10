@@ -120,7 +120,7 @@ fn count_supporters(
     for offset in 1..=window_rounds {
         let round = Round(anchor_round.0 + offset);
         for v in dag.vertices_at_round(round)? {
-            if vertex_reaches(&v, anchor_hash, dag)? {
+            if vertex_reaches(v.as_ref(), anchor_hash, dag)? {
                 supporters.insert(v.vertex.author);
             }
         }

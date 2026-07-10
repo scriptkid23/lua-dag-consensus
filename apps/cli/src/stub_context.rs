@@ -7,7 +7,7 @@ use consensus::{
 };
 use types::{
     crypto_types::Hash32,
-    dag::CertifiedVertex,
+    dag::SharedCertifiedVertex,
     macros::{MacroCheckpoint, MacroQc},
     micro::MicroQc,
     primitives::{Epoch, Height, Round, ValidatorId},
@@ -20,11 +20,11 @@ use types::{
 pub struct EmptyDag;
 
 impl DagView for EmptyDag {
-    fn vertex(&self, _hash: &Hash32) -> Result<Option<CertifiedVertex>> {
+    fn vertex(&self, _hash: &Hash32) -> Result<Option<SharedCertifiedVertex>> {
         Ok(None)
     }
 
-    fn vertices_at_round(&self, _round: Round) -> Result<Vec<CertifiedVertex>> {
+    fn vertices_at_round(&self, _round: Round) -> Result<Vec<SharedCertifiedVertex>> {
         Ok(vec![])
     }
 }

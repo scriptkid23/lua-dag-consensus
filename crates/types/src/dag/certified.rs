@@ -1,9 +1,14 @@
 //! L1 certified vertex (vertex + quorum certificate from the L1 layer).
 
+use std::sync::Arc;
+
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use super::vertex::Vertex;
 use crate::crypto_types::BlsAggSig;
+
+/// Shared handle to an immutable certified vertex (cheap to clone across threads).
+pub type SharedCertifiedVertex = Arc<CertifiedVertex>;
 
 /// A vertex carrying its L1 quorum certificate.
 ///

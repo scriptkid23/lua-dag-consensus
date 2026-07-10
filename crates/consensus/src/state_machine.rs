@@ -183,14 +183,14 @@ mod tests {
         fn vertex(
             &self,
             _hash: &types::crypto_types::Hash32,
-        ) -> Result<Option<types::dag::CertifiedVertex>> {
+        ) -> Result<Option<types::dag::SharedCertifiedVertex>> {
             Ok(None)
         }
 
         fn vertices_at_round(
             &self,
             _round: types::primitives::Round,
-        ) -> Result<Vec<types::dag::CertifiedVertex>> {
+        ) -> Result<Vec<types::dag::SharedCertifiedVertex>> {
             Ok(vec![])
         }
     }

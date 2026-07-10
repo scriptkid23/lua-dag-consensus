@@ -83,13 +83,13 @@ impl ValidatorSetPort for FixedValset {
 
 struct EmptyDag;
 impl DagView for EmptyDag {
-    fn vertex(&self, _h: &Hash32) -> consensus::Result<Option<types::dag::CertifiedVertex>> {
+    fn vertex(&self, _h: &Hash32) -> consensus::Result<Option<types::dag::SharedCertifiedVertex>> {
         Ok(None)
     }
     fn vertices_at_round(
         &self,
         _r: Round,
-    ) -> consensus::Result<Vec<types::dag::CertifiedVertex>> {
+    ) -> consensus::Result<Vec<types::dag::SharedCertifiedVertex>> {
         Ok(vec![])
     }
 }

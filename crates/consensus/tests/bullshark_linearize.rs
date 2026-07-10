@@ -1,7 +1,7 @@
 //! BFS closure over the anchor's causal past.
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use consensus::{
     bullshark::linearize::{Linearization, checkpoint_hash_from_linearization},
@@ -9,27 +9,31 @@ use consensus::{
 };
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
-    dag::{CertifiedVertex, Vertex},
+    dag::{CertifiedVertex, SharedCertifiedVertex, Vertex},
     primitives::{Round, ValidatorId},
 };
 
 #[derive(Default)]
 struct HashMapDag {
-    by_hash: RwLock<HashMap<Hash32, CertifiedVertex>>,
+    by_hash: RwLock<HashMap<Hash32, SharedCertifiedVertex>>,
 }
 
 impl HashMapDag {
     fn insert(&self, v: CertifiedVertex) {
-        self.by_hash.write().unwrap().insert(v.vertex.hash, v);
+        let shared = Arc::new(v);
+        self.by_hash
+            .write()
+            .unwrap()
+            .insert(shared.vertex.hash, shared);
     }
 }
 
 impl DagView for HashMapDag {
-    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<CertifiedVertex>> {
+    fn vertex(&self, hash: &Hash32) -> consensus::Result<Option<SharedCertifiedVertex>> {
         Ok(self.by_hash.read().unwrap().get(hash).cloned())
     }
 
-    fn vertices_at_round(&self, _round: Round) -> consensus::Result<Vec<CertifiedVertex>> {
+    fn vertices_at_round(&self, _round: Round) -> consensus::Result<Vec<SharedCertifiedVertex>> {
         Ok(vec![])
     }
 }

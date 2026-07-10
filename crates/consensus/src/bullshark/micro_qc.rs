@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use types::{
     crypto_types::{BlsAggSig, BlsSig, Hash32},
-    dag::CertifiedVertex,
+    dag::SharedCertifiedVertex,
     micro::MicroQc,
     primitives::{Epoch, ValidatorId},
 };
@@ -78,7 +78,7 @@ impl<'a> MicroQcBuilder<'a> {
 /// is. The producer is responsible for `EmittedSet` bookkeeping.
 pub fn try_finalize(
     checkpoint_hash: Hash32,
-    linearized: &[CertifiedVertex],
+    linearized: &[SharedCertifiedVertex],
     ctx: &HostContext<'_>,
 ) -> Result<Option<MicroQc>> {
     let set = ctx

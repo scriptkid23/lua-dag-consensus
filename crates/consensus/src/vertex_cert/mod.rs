@@ -474,13 +474,13 @@ pub(crate) mod test_fixture {
         fn vertex(
             &self,
             _h: &Hash32,
-        ) -> crate::error::Result<Option<types::dag::CertifiedVertex>> {
+        ) -> crate::error::Result<Option<types::dag::SharedCertifiedVertex>> {
             Ok(None)
         }
         fn vertices_at_round(
             &self,
             _r: types::primitives::Round,
-        ) -> crate::error::Result<Vec<types::dag::CertifiedVertex>> {
+        ) -> crate::error::Result<Vec<types::dag::SharedCertifiedVertex>> {
             Ok(vec![])
         }
     }
