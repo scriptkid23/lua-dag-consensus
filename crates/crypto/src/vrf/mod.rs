@@ -1,4 +1,4 @@
-//! ECVRF (Edwards25519, RFC 9381) wrappers + stake-weighted sortition.
+//! ECVRF (Edwards25519, RFC 9381) + stake-weighted sortition helpers.
 
 pub mod ecvrf;
 pub mod sortition;
