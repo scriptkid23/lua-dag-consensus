@@ -154,6 +154,10 @@ pub fn blob_status_at(
 /// `lua_submitBlob` — publish a payload through blob custody. Rejects
 /// payloads above the erasure capacity (`k * data_shard_size`) with an
 /// explicit `error` field; returns `null` when custody is disabled.
+///
+/// Gossip publish failures after atomic local commit do **not** roll back
+/// the blob: chunks and `PublishRecord` remain durable; attach proceeds
+/// via the pending queue regardless of peer gossip success.
 pub async fn submit_blob(
     blob: &Option<BlobCustodyHandle>,
     params: &serde_json::Value,

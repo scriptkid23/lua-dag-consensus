@@ -11,6 +11,11 @@ use types::dag::BlobRef;
 pub trait PendingBlobSource: Send + Sync {
     /// Pop every queued `BlobRef` in FIFO order.
     fn drain(&self) -> Vec<BlobRef>;
+
+    /// Called after blobs were sealed+signed into a local vertex proposal,
+    /// before network broadcast. Marks publish state durable (Ready→Attached).
+    /// Default: no-op (tests / hosts without custody).
+    fn confirm_attached(&self, _blobs: &[BlobRef]) {}
 }
 
 /// Stub for tests, sim, and hosts without blob custody.

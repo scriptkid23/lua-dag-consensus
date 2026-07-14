@@ -53,8 +53,7 @@ async fn spawn_node0(custody_blob: Option<Vec<u8>>) -> Node0 {
     let metrics = Arc::new(Metrics::new().unwrap());
 
     let custody = if let Some(payload) = custody_blob {
-        let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)))
-            as Arc<dyn dag::blob::store::BlobStore>;
+        let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
         let (_chunks_tx, chunks_rx) = mpsc::channel(64);
         let (publish_tx, mut publish_rx) = mpsc::channel(256);
         tokio::spawn(async move { while publish_rx.recv().await.is_some() {} });

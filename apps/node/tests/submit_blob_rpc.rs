@@ -20,7 +20,7 @@ fn spawn_custody(dir: &tempfile::TempDir) -> BlobCustodyHandle {
         })
         .unwrap(),
     );
-    let store = Arc::new(RocksBlobStore::new(db)) as Arc<dyn dag::blob::store::BlobStore>;
+    let store = Arc::new(RocksBlobStore::new(db));
     let (_chunks_tx, chunks_rx) = mpsc::channel(64);
     let (publish_tx, mut publish_rx) = mpsc::channel(256);
     tokio::spawn(async move { while publish_rx.recv().await.is_some() {} });

@@ -1,6 +1,6 @@
 //! `RocksDB` handle wrapper.
 
-use rocksdb::{ColumnFamilyDescriptor, DB, Options};
+use rocksdb::{ColumnFamilyDescriptor, DB, IteratorMode, Options};
 
 use crate::{
     columns::ColumnFamily,
@@ -66,10 +66,51 @@ impl Database {
         &self.inner
     }
 
+    /// Full-column scan iterator (boot recovery / orphan detection).
+    pub fn scan_cf(
+        &self,
+        cf: ColumnFamily,
+    ) -> impl Iterator<Item = Result<(Vec<u8>, Vec<u8>)>> + '_ {
+        let cf_handle = match self.cf(cf) {
+            Ok(h) => h,
+            Err(e) => {
+                return ScanCfIter {
+                    inner: None,
+                    init_err: Some(e),
+                };
+            }
+        };
+        ScanCfIter {
+            inner: Some(self.inner.iterator_cf(cf_handle, IteratorMode::Start)),
+            init_err: None,
+        }
+    }
+
     /// Drop and remove the on-disk directory. **Tests only.**
     #[cfg(test)]
     pub fn destroy_for_tests(path: impl AsRef<std::path::Path>) {
         let _ = DB::destroy(&Options::default(), path);
+    }
+}
+
+struct ScanCfIter<'a> {
+    inner: Option<rocksdb::DBIterator<'a>>,
+    init_err: Option<Error>,
+}
+
+impl Iterator for ScanCfIter<'_> {
+    type Item = Result<(Vec<u8>, Vec<u8>)>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(err) = self.init_err.take() {
+            return Some(Err(err));
+        }
+        let iter = self.inner.as_mut()?;
+        match iter.next() {
+            Some(Ok((k, v))) => Some(Ok((k.to_vec(), v.to_vec()))),
+            Some(Err(e)) => Some(Err(Error::Rocks(e))),
+            None => None,
+        }
     }
 }
 

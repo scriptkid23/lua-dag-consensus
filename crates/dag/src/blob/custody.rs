@@ -59,6 +59,23 @@ impl CustodyLedger {
         }
     }
 
+    /// Metadata-only shard presence (boot rehydrate; no payload reads).
+    pub fn note_chunk_present(&mut self, blob_id: &BlobId, index: u32) -> bool {
+        if self.available.contains(blob_id) {
+            return false;
+        }
+        let Some(meta) = self.meta.get_mut(blob_id) else {
+            return false;
+        };
+        meta.received.insert(index);
+        if meta.received.len() >= usize::try_from(meta.cfg.k).unwrap_or(usize::MAX) {
+            self.available.insert(*blob_id);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Whether the blob is locally readable.
     #[must_use]
     pub fn is_available(&self, blob_id: &BlobId) -> bool {

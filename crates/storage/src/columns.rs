@@ -29,6 +29,8 @@ pub enum ColumnFamily {
     BlobStatus,
     /// `(blob_id, chunk_index) -> chunk bytes`.
     BlobChunk,
+    /// `blob_id -> PublishRecord` (local publish/attach lifecycle).
+    BlobPublish,
 }
 
 impl ColumnFamily {
@@ -47,6 +49,7 @@ impl ColumnFamily {
             Self::VoteBook => "votebook",
             Self::BlobStatus => "blob_status",
             Self::BlobChunk => "blob_chunk",
+            Self::BlobPublish => "blob_publish",
         }
     }
 
@@ -65,6 +68,7 @@ impl ColumnFamily {
             Self::VoteBook,
             Self::BlobStatus,
             Self::BlobChunk,
+            Self::BlobPublish,
         ]
     }
 }

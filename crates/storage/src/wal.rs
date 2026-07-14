@@ -4,6 +4,11 @@ use rocksdb::WriteBatch;
 
 use crate::{columns::ColumnFamily, db::Database, error::Result};
 
+/// Fresh empty write batch.
+pub fn new_batch() -> WriteBatch {
+    WriteBatch::default()
+}
+
 /// Apply a `WriteBatch` atomically. Wrapping `rocksdb::WriteBatch` lets
 /// us swap in pre-flush hooks later without touching call sites.
 pub fn apply(db: &Database, batch: WriteBatch) -> Result<()> {

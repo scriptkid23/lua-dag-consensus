@@ -36,8 +36,7 @@ async fn publish_marks_blob_available_and_persists_chunks() {
         while publish_rx.recv().await.is_some() {}
     });
 
-    let store_for_custody = Arc::new(RocksBlobStore::new(Arc::clone(&db)))
-        as Arc<dyn dag::blob::store::BlobStore>;
+    let store_for_custody = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
     let handle = BlobCustody::spawn(
         store_for_custody,
         chunks_rx,

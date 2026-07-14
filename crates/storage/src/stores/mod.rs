@@ -2,6 +2,7 @@
 //! helpers built on top of [`crate::db::Database`].
 
 pub mod blob_chunk_store;
+pub mod blob_publish_store;
 pub mod blob_status_store;
 pub mod macro_store;
 pub mod micro_store;

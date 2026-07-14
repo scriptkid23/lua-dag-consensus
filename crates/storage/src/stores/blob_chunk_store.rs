@@ -1,6 +1,7 @@
 //! `(blob_id, chunk_index) -> borsh { total_chunks, size_bytes, data }`.
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use rocksdb::WriteBatch;
 use types::primitives::BlobId;
 
 use crate::{
@@ -45,6 +46,28 @@ pub fn get(db: &Database, blob_id: &BlobId, index: u32) -> Result<Option<Vec<u8>
     let stored: StoredChunk =
         borsh::from_slice(&bytes).map_err(|e| Error::Codec(e.to_string()))?;
     Ok(Some(stored.data))
+}
+
+/// Append one chunk row to an existing `WriteBatch`.
+pub fn put_batch(
+    batch: &mut WriteBatch,
+    db: &Database,
+    blob_id: &BlobId,
+    index: u32,
+    total_chunks: u32,
+    size_bytes: u64,
+    data: &[u8],
+) -> Result<()> {
+    let chunk_key = keys::blob_chunk(blob_id, index);
+    let value = StoredChunk {
+        total_chunks,
+        size_bytes,
+        data: data.to_vec(),
+    };
+    let bytes = borsh::to_vec(&value).map_err(|e| Error::Codec(e.to_string()))?;
+    let h = db.cf(ColumnFamily::BlobChunk)?;
+    batch.put_cf(h, chunk_key, bytes);
+    Ok(())
 }
 
 /// Whether `(blob_id, index)` exists.

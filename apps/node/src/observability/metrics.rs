@@ -27,6 +27,16 @@ pub struct Metrics {
     pub blob_available: IntCounter,
     /// Inbound blob chunks rejected by the store.
     pub blob_chunk_rejected: IntCounter,
+    /// Atomic blob publishes committed via WriteBatch.
+    pub blob_publish_atomic_total: IntCounter,
+    /// Ready blobs re-enqueued during boot recovery.
+    pub blob_boot_reenqueue_total: IntCounter,
+    /// Failed mark_attached attempts (blob stays Ready).
+    pub blob_mark_attached_fail_total: IntCounter,
+    /// Orphan chunk rows without a PublishRecord.
+    pub blob_orphan_chunk_total: IntCounter,
+    /// Ready publish records skipped due to missing chunks.
+    pub blob_ready_without_chunks_total: IntCounter,
 }
 
 impl Metrics {
@@ -83,6 +93,31 @@ impl Metrics {
         registry.register(Box::new(blob_chunks_published.clone()))?;
         registry.register(Box::new(blob_available.clone()))?;
         registry.register(Box::new(blob_chunk_rejected.clone()))?;
+        let blob_publish_atomic_total = IntCounter::new(
+            "node_blob_publish_atomic_total",
+            "Blob publishes committed atomically via WriteBatch",
+        )?;
+        let blob_boot_reenqueue_total = IntCounter::new(
+            "node_blob_boot_reenqueue_total",
+            "Ready blobs re-enqueued during boot recovery",
+        )?;
+        let blob_mark_attached_fail_total = IntCounter::new(
+            "node_blob_mark_attached_fail_total",
+            "Failed mark_attached attempts (blob stays Ready for retry)",
+        )?;
+        let blob_orphan_chunk_total = IntCounter::new(
+            "node_blob_orphan_chunk_total",
+            "Orphan BlobChunk rows without a matching PublishRecord",
+        )?;
+        let blob_ready_without_chunks_total = IntCounter::new(
+            "node_blob_ready_without_chunks_total",
+            "Ready PublishRecords skipped at boot due to missing chunks",
+        )?;
+        registry.register(Box::new(blob_publish_atomic_total.clone()))?;
+        registry.register(Box::new(blob_boot_reenqueue_total.clone()))?;
+        registry.register(Box::new(blob_mark_attached_fail_total.clone()))?;
+        registry.register(Box::new(blob_orphan_chunk_total.clone()))?;
+        registry.register(Box::new(blob_ready_without_chunks_total.clone()))?;
         Ok(Self {
             registry,
             events_processed,
@@ -95,6 +130,11 @@ impl Metrics {
             blob_chunks_published,
             blob_available,
             blob_chunk_rejected,
+            blob_publish_atomic_total,
+            blob_boot_reenqueue_total,
+            blob_mark_attached_fail_total,
+            blob_orphan_chunk_total,
+            blob_ready_without_chunks_total,
         })
     }
 

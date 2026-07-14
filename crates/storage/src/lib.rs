@@ -15,6 +15,8 @@ pub mod snapshot;
 pub mod stores;
 pub mod wal;
 
+pub use wal::{apply, new_batch, put_one};
+pub use rocksdb::WriteBatch;
 pub use config::StorageConfig;
 pub use db::Database;
 pub use error::{Error, Result};

@@ -146,8 +146,7 @@ async fn run_async(cfg: NodeConfig, args: Args) -> Result<()> {
         gossip_publish_tx = Some(spawn.publish_tx.clone());
 
         if let Some((_, chunks_rx)) = blob_channel {
-            let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)))
-                as Arc<dyn dag::blob::store::BlobStore>;
+            let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
             blob_custody_handle = Some(BlobCustody::spawn(
                 store,
                 chunks_rx,

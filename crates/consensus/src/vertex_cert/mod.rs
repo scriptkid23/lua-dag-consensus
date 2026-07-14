@@ -233,11 +233,12 @@ fn propose_round(
     parents: Vec<Hash32>,
     actions: &mut Actions,
 ) -> Result<()> {
+    let blobs = ctx.pending_blobs.drain();
     let mut vertex = Vertex {
         round,
         author: book.self_id,
         parents,
-        blobs: ctx.pending_blobs.drain(),
+        blobs: blobs.clone(),
         hash: Hash32::zero(),
     };
     dag::signing::seal_hash(&mut vertex);
@@ -260,6 +261,8 @@ fn propose_round(
         .or_default()
         .push(proposal.clone());
     book.current_round = round;
+
+    ctx.pending_blobs.confirm_attached(&blobs);
 
     if let Some(old) = book.round_timer.take() {
         actions.push(Action::CancelTimer(old));
@@ -1142,5 +1145,127 @@ mod advance_tests {
         assert!(!book.certified_by_round.contains_key(&Round(1)));
         assert!(book.certified_by_round.contains_key(&Round(2)));
         assert!(book.my_proposals.values().all(|p| p.vertex.round.0 + 1 >= 3));
+    }
+}
+
+#[cfg(test)]
+mod pending_blob_hook_tests {
+    use std::sync::Mutex;
+
+    use super::test_fixture::*;
+    use super::*;
+    use crate::ports::PendingBlobSource;
+    use types::{crypto_types::Hash32, dag::BlobRef, primitives::BlobId};
+
+    struct RecordingPending {
+        queue: Mutex<Vec<BlobRef>>,
+        confirm_log: Mutex<Vec<Vec<BlobId>>>,
+        boot_done: bool,
+    }
+
+    impl RecordingPending {
+        fn with_blobs(blobs: Vec<BlobRef>, boot_done: bool) -> Self {
+            Self {
+                queue: Mutex::new(blobs),
+                confirm_log: Mutex::new(Vec::new()),
+                boot_done,
+            }
+        }
+    }
+
+    impl PendingBlobSource for RecordingPending {
+        fn drain(&self) -> Vec<BlobRef> {
+            if !self.boot_done {
+                return Vec::new();
+            }
+            self.queue.lock().expect("lock").drain(..).collect()
+        }
+
+        fn confirm_attached(&self, blobs: &[BlobRef]) {
+            self.confirm_log
+                .lock()
+                .expect("lock")
+                .push(blobs.iter().map(|b| b.blob_id).collect());
+        }
+    }
+
+    fn sample_blob(byte: u8) -> BlobRef {
+        BlobRef {
+            blob_id: BlobId([byte; 32]),
+            commitment: Hash32([byte; 32]),
+            size_bytes: 1024,
+        }
+    }
+
+    #[test]
+    fn propose_blocked_until_boot_sync_done() {
+        let ring = Ring::new(4);
+        let valset = FixedValset(ring.set.clone());
+        let signer = RingSigner { ring: &ring, idx: 0 };
+        let pending = RecordingPending::with_blobs(vec![sample_blob(0x01)], false);
+        let parts = (
+            EmptyDag,
+            ZeroClock,
+            ZeroBeacon,
+            MemPersistence::default(),
+        );
+        let ctx = HostContext {
+            dag: &parts.0,
+            clock: &parts.1,
+            valset: &valset,
+            beacon: &parts.2,
+            persistence: &parts.3,
+            signer: &signer,
+            pending_blobs: &pending,
+        };
+        let mut book = VertexBook::new(ring.id(0));
+        let cfg = Config::default_table_17_1();
+        let actions = genesis_propose(&mut book, &cfg, &ctx).unwrap();
+        let proposal = actions
+            .iter()
+            .find_map(|a| match a {
+                Action::BroadcastVertexProposal(p) => Some(p),
+                _ => None,
+            })
+            .expect("proposal");
+        assert!(proposal.vertex.blobs.is_empty());
+    }
+
+    #[test]
+    fn confirm_attached_called_after_propose() {
+        let ring = Ring::new(4);
+        let valset = FixedValset(ring.set.clone());
+        let signer = RingSigner { ring: &ring, idx: 0 };
+        let blob = sample_blob(0x02);
+        let pending = RecordingPending::with_blobs(vec![blob], true);
+        let parts = (
+            EmptyDag,
+            ZeroClock,
+            ZeroBeacon,
+            MemPersistence::default(),
+        );
+        let ctx = HostContext {
+            dag: &parts.0,
+            clock: &parts.1,
+            valset: &valset,
+            beacon: &parts.2,
+            persistence: &parts.3,
+            signer: &signer,
+            pending_blobs: &pending,
+        };
+        let mut book = VertexBook::new(ring.id(0));
+        let cfg = Config::default_table_17_1();
+        let actions = genesis_propose(&mut book, &cfg, &ctx).unwrap();
+        let proposal = actions
+            .iter()
+            .find_map(|a| match a {
+                Action::BroadcastVertexProposal(p) => Some(p),
+                _ => None,
+            })
+            .expect("proposal");
+        assert_eq!(proposal.vertex.blobs.len(), 1);
+        let log = pending.confirm_log.lock().expect("lock");
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0], vec![blob.blob_id]);
     }
 }

@@ -128,6 +128,15 @@ impl PendingBlobSource for CustodyPendingBlobs {
             .map(BlobCustodyHandle::drain_pending)
             .unwrap_or_default()
     }
+
+    fn confirm_attached(&self, blobs: &[BlobRef]) {
+        let Some(handle) = self.0.as_ref() else {
+            return;
+        };
+        for blob in blobs {
+            let _ = handle.mark_attached(blob.blob_id);
+        }
+    }
 }
 
 /// Owned host ports reused across orchestrator steps.

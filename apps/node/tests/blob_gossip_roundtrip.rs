@@ -76,8 +76,7 @@ async fn blob_chunks_roundtrip_between_two_loopback_swarms() {
 
     tokio::time::sleep(Duration::from_millis(1500)).await;
 
-    let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)))
-        as Arc<dyn dag::blob::store::BlobStore>;
+    let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
     let metrics = Arc::new(Metrics::new().unwrap());
     let custody = BlobCustody::spawn(
         store,

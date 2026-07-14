@@ -30,8 +30,7 @@ fn open_query(dir: &tempfile::TempDir) -> (Arc<Database>, RocksConsensusQuery) {
 }
 
 fn spawn_custody(db: &Arc<Database>) -> BlobCustodyHandle {
-    let store =
-        Arc::new(RocksBlobStore::new(Arc::clone(db))) as Arc<dyn dag::blob::store::BlobStore>;
+    let store = Arc::new(RocksBlobStore::new(Arc::clone(db)));
     let (_chunks_tx, chunks_rx) = mpsc::channel(64);
     let (publish_tx, mut publish_rx) = mpsc::channel(256);
     tokio::spawn(async move { while publish_rx.recv().await.is_some() {} });

@@ -30,7 +30,7 @@ async fn erasure_publish_stores_all_shards_and_lists_chunk_refs() {
         while publish_rx.recv().await.is_some() {}
     });
 
-    let store = Arc::new(RocksBlobStore::new(Arc::clone(&db))) as Arc<dyn dag::blob::store::BlobStore>;
+    let store = Arc::new(RocksBlobStore::new(Arc::clone(&db)));
     let handle = BlobCustody::spawn(
         store,
         chunks_rx,
