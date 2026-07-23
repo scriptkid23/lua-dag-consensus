@@ -194,6 +194,10 @@ libp2p xây kết nối theo kiểu **lắp ghép + upgrade**: bắt đầu từ
 
 ### 4.4 Hai nhánh vận chuyển và `or_transport`
 
+`or_transport` là **bộ chọn nhánh vận chuyển** của libp2p: ghép hai (hoặc nhiều) transport thành **một** transport thống nhất. Khi dial/listen, nó nhìn **Multiaddr** rồi chọn nhánh phù hợp. Đây **không** phải protocol mạng riêng, mà là *combinator* — một cổng vào, nhiều đường đi bên dưới.
+
+**Vấn đề nó giải quyết.** Không gắn cứng một loại socket (chỉ TCP). Swarm / gossipsub chỉ thấy giao diện chung `(PeerId, StreamMuxer)` — không cần biết peer đang đi TCP hay QUIC. Thêm WebSocket hoặc memory transport cho test cũng theo cùng pattern; tầng trên không đổi.
+
 LUA-DAG (qua `build_transport`) hỗ trợ **hai đường vận chuyển song song**, ghép bằng **`or_transport`**: khi dial, transport nào **nhận diện được** Multiaddr sẽ xử lý.
 
 ```mermaid
@@ -221,9 +225,31 @@ flowchart LR
 
     OR -->|"/tcp/..."| branch_tcp
     OR -->|"/quic-v1/..."| branch_quic
-    Y1 --> OUT["Kết quốc thống nhất: PeerId + StreamMuxer"]
+    Y1 --> OUT["Kết quả thống nhất: PeerId + StreamMuxer"]
     Q1 --> OUT
 ```
+
+Trong `crates/net/src/transport.rs` (`build_transport`):
+
+1. **Nhánh QUIC** — Multiaddr kiểu `/udp/.../quic-v1`
+2. **Nhánh TCP** (fallback) — Multiaddr kiểu `/tcp/...`, sau đó upgrade Noise → Yamux
+3. `.map(|either, _| either.into_inner())` — gỡ `Either`, trả về một kiểu kết nối thống nhất cho Swarm
+
+**Cách chọn nhánh.** Không phải “thử cả hai rồi lấy cái nhanh hơn”. Logic là: **Multiaddr chứa protocol nào thì transport nào hỗ trợ protocol đó mới nhận**.
+
+| Multiaddr | Nhánh được chọn | Stack thực tế |
+|-----------|-----------------|---------------|
+| `/ip4/.../tcp/9000` | TCP | TCP + Noise XX + Yamux |
+| `/ip4/.../udp/9000/quic-v1` | QUIC | QUIC (TLS 1.3 + mux sẵn) |
+
+**Vì sao cần hai nhánh.** QUIC và TCP upgrade khác nhau: QUIC đã có TLS + mux; TCP phải thêm Noise + Yamux. Ghép bằng `or_transport` để node hỗ trợ cả hai mà gossipsub / consensus không đổi API.
+
+**Hai entry point trong repo.**
+
+| Hàm | Dùng `or_transport`? | Stack | Mục đích |
+|-----|----------------------|-------|----------|
+| `build_transport` | Có — QUIC **or** TCP/Noise/Yamux | Song song hai nhánh | Caller muốn QUIC + TCP |
+| `build_transport_tcp_only` | Không | DNS + TCP/Noise/Yamux | Devnet / Compose / CI — cần `/dns4/<service>/tcp/...` |
 
 **Điểm quan trọng**: cả hai nhánh trả về **cùng một giao diện** cho Swarm — `(PeerId, StreamMuxer)`. Gossipsub và consensus **không cần biết** peer đang dùng TCP hay QUIC.
 

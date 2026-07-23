@@ -186,6 +186,10 @@ libp2p builds connections by **composition + upgrade**: start from a raw byte st
 
 ### 4.4 Two transport branches and `or_transport`
 
+`or_transport` is libp2p’s **transport-branch selector**: it combines two (or more) transports into **one** unified transport. On dial/listen it inspects the **Multiaddr** and picks the matching branch. It is **not** a network protocol of its own — it is a *combinator*: one entry point, multiple paths underneath.
+
+**Problem it solves.** Avoid hard-wiring a single socket type (TCP only). Swarm / gossipsub only see the common interface `(PeerId, StreamMuxer)` — they do not need to know whether a peer is on TCP or QUIC. Adding WebSocket or an in-memory transport for tests follows the same pattern; upper layers stay unchanged.
+
 LUA-DAG (via `build_transport`) supports **two parallel transport paths**, combined with `or_transport`: on dial, whichever transport **recognizes** the Multiaddr handles it.
 
 ```mermaid
@@ -217,7 +221,27 @@ flowchart LR
     Q1 --> OUT
 ```
 
+In `crates/net/src/transport.rs` (`build_transport`):
 
+1. **QUIC branch** — Multiaddrs of the form `/udp/.../quic-v1`
+2. **TCP branch** (fallback) — Multiaddrs of the form `/tcp/...`, then Noise → Yamux upgrades
+3. `.map(|either, _| either.into_inner())` — unwraps `Either` into one connection type for the Swarm
+
+**How the branch is chosen.** This is not “try both and take the faster one.” The rule is: **whichever transport supports the protocols present in the Multiaddr accepts it**.
+
+| Multiaddr | Selected branch | Actual stack |
+|-----------|-----------------|--------------|
+| `/ip4/.../tcp/9000` | TCP | TCP + Noise XX + Yamux |
+| `/ip4/.../udp/9000/quic-v1` | QUIC | QUIC (TLS 1.3 + built-in mux) |
+
+**Why two branches.** QUIC and TCP upgrade differently: QUIC already includes TLS + mux; TCP must add Noise + Yamux. Combining them with `or_transport` lets a node speak both without changing the gossipsub / consensus API.
+
+**Two entry points in the repo.**
+
+| Function | Uses `or_transport`? | Stack | Purpose |
+|----------|----------------------|-------|---------|
+| `build_transport` | Yes — QUIC **or** TCP/Noise/Yamux | Both branches in parallel | Callers that want QUIC + TCP |
+| `build_transport_tcp_only` | No | DNS + TCP/Noise/Yamux | Devnet / Compose / CI — needs `/dns4/<service>/tcp/...` |
 
 **Key point**: both branches return the **same interface** to the Swarm — `(PeerId, StreamMuxer)`. Gossipsub and consensus **do not need to know** whether a peer is on TCP or QUIC.
 
