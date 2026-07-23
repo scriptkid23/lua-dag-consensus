@@ -378,6 +378,8 @@ Implementation tham chiếu: `crates/net/src/transport.rs` — `build_transport`
 
 ## 5. Tầng Gossip — lan truyền message
 
+> **Kiến trúc sâu Gossipsub** (overlay, mesh, eager/lazy, heartbeat, scoring — không bàn transport/API): [gossipsub-internals.md](./gossipsub-internals.md).
+
 Nếu tầng **Transport** trả lời *“làm sao hai validator kết nối an toàn?”*, tầng **Gossip** trả lời *“message đồng thuận lan tới toàn mạng thế nào, với chi phí băng thông hợp lý?”*. LUA-DAG dùng **libp2p Gossipsub** — pub/sub có mesh overlay — làm cơ chế phân phối chính cho MicroQc, MacroProposal, vertex cert, slash evidence, và blob shard.
 
 ```mermaid
